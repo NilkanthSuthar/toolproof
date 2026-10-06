@@ -1,0 +1,32 @@
+# Tests for examples/buggy_server.py. Most of these are meant to FAIL:
+# they show what toolproof reports when a server misbehaves.
+server:
+  command: ["python", "buggy_server.py"]
+
+timeout_ms: 1000
+
+tests:
+  - name: weather works for a normal city
+    tool: get_weather
+    args: { city: Toronto }
+    expect: { is_error: false, contains: Toronto }
+
+  - name: empty city should be an error, not a crash
+    tool: get_weather
+    args: { city: "" }
+    expect: { is_error: true }
+
+  - name: server still works after the crash
+    tool: get_weather
+    args: { city: Montreal }
+    expect: { contains: Montreal }
+
+  - name: report comes back in time
+    tool: slow_report
+    args: { city: Toronto }
+    expect: { is_error: false }
+
+  - name: temperature matches its output schema
+    tool: get_temperature
+    args: { city: Toronto }
+    expect: { is_error: false }

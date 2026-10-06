@@ -1,0 +1,53 @@
+# Tests for examples/weather_server.py.
+# Run from the repo root:  toolproof run examples/toolproof.yaml
+server:
+  command: ["python", "weather_server.py"]
+
+timeout_ms: 5000
+
+tests:
+  - name: toronto weather
+    tool: get_weather
+    args: { city: Toronto }
+    expect:
+      is_error: false
+      contains: "Toronto"
+      jsonpath:
+        "$.temp_c": { type: number, min: -50, max: 50 }
+        "$.conditions": { equals: cloudy }
+      max_latency_ms: 2000
+
+  - name: city names are case insensitive
+    tool: get_weather
+    args: { city: montreal }
+    expect:
+      jsonpath:
+        "$.city": { equals: Montreal }
+
+  - name: rejects empty city
+    tool: get_weather
+    args: { city: "" }
+    expect: { is_error: true, contains: "must not be empty" }
+
+  - name: unknown city is an error
+    tool: get_weather
+    args: { city: Atlantis }
+    expect: { is_error: true, regex: "unknown city" }
+
+  - name: five day forecast
+    tool: get_forecast
+    args: { city: Calgary, days: 5 }
+    expect:
+      jsonpath:
+        "$.days": { type: array }
+        "$.days[4].temp_c": { equals: 10.5 }
+
+  - name: forecast rejects 30 days
+    tool: get_forecast
+    args: { city: Calgary, days: 30 }
+    expect: { is_error: true }
+
+  - name: list cities
+    tool: list_cities
+    expect:
+      equals: { result: [Calgary, Montreal, Toronto, Vancouver] }
