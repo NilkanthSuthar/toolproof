@@ -142,7 +142,7 @@ class McpServer:
         except Exception as exc:
             stderr = self.stderr_tail()
             await self.close()
-            message = f"could not connect to server: {exc!r}"
+            message = f"could not connect to server: {_describe(exc)}"
             if stderr:
                 message += f"\nserver stderr:\n{stderr}"
             raise ServerError(message) from exc
@@ -247,7 +247,7 @@ class McpServer:
                 )
             return self._failed(tool, arguments, latency, f"connection lost: {exc.error.message}")
         except Exception as exc:
-            return self._failed(tool, arguments, _ms_since(start), str(exc) or repr(exc))
+            return self._failed(tool, arguments, _ms_since(start), _describe(exc))
         return CallResult(
             tool=tool,
             arguments=arguments,
@@ -284,6 +284,15 @@ class McpServer:
 
 async def _skip_validation(name: str, result: types.CallToolResult) -> None:
     return None
+
+
+def _describe(exc: BaseException) -> str:
+    """A short message for an exception, unwrapping the task-group wrappers anyio adds."""
+    while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+        exc = exc.exceptions[0]
+    if isinstance(exc, MCPError):
+        return exc.error.message
+    return str(exc) or exc.__class__.__name__
 
 
 def _ms_since(start: float) -> float:
