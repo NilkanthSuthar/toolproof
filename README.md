@@ -1,7 +1,7 @@
 # toolproof
 
 [![CI](https://github.com/NilkanthSuthar/toolproof/actions/workflows/ci.yml/badge.svg)](https://github.com/NilkanthSuthar/toolproof/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/toolproof)](https://pypi.org/project/toolproof/)
+[![PyPI](https://img.shields.io/pypi/v/mcp-toolproof)](https://pypi.org/project/mcp-toolproof/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **pytest for MCP servers.** Write repeatable tests for any [Model Context Protocol](https://modelcontextprotocol.io) server's tools and run them in CI.
@@ -16,10 +16,10 @@
 ## Install
 
 ```bash
-pip install toolproof
+pip install mcp-toolproof
 ```
 
-Python 3.11+.
+Python 3.11+. The package is called `mcp-toolproof` on PyPI. The command and the import are both `toolproof`.
 
 ## 30-second quickstart
 
@@ -221,7 +221,7 @@ def mcp_server_config():
 ## Using it in GitHub Actions
 
 ```yaml
-- run: pip install toolproof
+- run: pip install mcp-toolproof
 - run: toolproof run toolproof.yaml --junit report.xml
 - uses: actions/upload-artifact@v5
   if: always()

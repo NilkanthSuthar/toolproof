@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "toolproof"
+name = "mcp-toolproof"
 version = "0.1.0"
 description = "Automated tests for MCP servers: schema checks, YAML test cases, JUnit output and a pytest plugin."
 readme = "README.md"
