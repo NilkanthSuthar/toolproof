@@ -212,6 +212,7 @@ import pytest
 from pathlib import Path
 from toolproof import ServerConfig
 
+
 @pytest.fixture(scope="session")
 def mcp_server_config():
     return ServerConfig(command=["python", "my_server.py"], env={"MODE": "test"}), Path.cwd()
@@ -222,7 +223,7 @@ def mcp_server_config():
 ```yaml
 - run: pip install toolproof
 - run: toolproof run toolproof.yaml --junit report.xml
-- uses: actions/upload-artifact@v4
+- uses: actions/upload-artifact@v5
   if: always()
   with:
     name: toolproof-report
