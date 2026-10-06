@@ -245,7 +245,12 @@ class McpServer:
                     latency_ms=latency,
                     protocol_error=True,
                 )
-            return self._failed(tool, arguments, latency, f"connection lost: {exc.error.message}")
+            return self._failed(
+                tool,
+                arguments,
+                latency,
+                f"connection lost, server probably crashed ({exc.error.message})",
+            )
         except Exception as exc:
             return self._failed(tool, arguments, _ms_since(start), _describe(exc))
         return CallResult(
