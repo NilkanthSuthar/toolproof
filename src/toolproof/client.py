@@ -7,11 +7,10 @@ assertions can work with.
 
 from __future__ import annotations
 
-import contextlib
 import json
+import sys
 import tempfile
 import time
-from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
@@ -19,6 +18,7 @@ from typing import Any, TextIO, cast
 
 import anyio
 import mcp_types as types
+from anyio.abc import TaskGroup
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.exceptions import MCPError
@@ -43,6 +43,7 @@ class CallResult:
     transport_error: str | None = None
     timed_out: bool = False
     protocol_error: bool = False
+    error_code: int | None = None  # JSON-RPC error code when protocol_error is set
 
     @property
     def data(self) -> Any:
@@ -88,17 +89,28 @@ class McpServer:
         async with McpServer(config) as server:
             tools = await server.list_tools()
             result = await server.call("get_weather", {"city": "Toronto"})
+
+    The connection lives in a background task, so `reconnect()` can be called
+    from any task (fuzzing calls it from a worker thread after a crash).
     """
 
     def __init__(self, config: ServerConfig, base_dir: Path | None = None) -> None:
         self.config = config
         self.base_dir = base_dir or Path.cwd()
-        self._stack: AsyncExitStack | None = None
+        self._task_group: TaskGroup | None = None
         self._client: Client | None = None
+        self._stop: anyio.Event | None = None
+        self._stopped: anyio.Event | None = None
         self._stderr: TextIO | None = None
 
     async def __aenter__(self) -> McpServer:
-        await self.connect()
+        self._task_group = anyio.create_task_group()
+        await self._task_group.__aenter__()
+        try:
+            await self.connect()
+        except BaseException:
+            await self._task_group.__aexit__(None, None, None)
+            raise
         return self
 
     async def __aexit__(
@@ -108,52 +120,81 @@ class McpServer:
         tb: TracebackType | None,
     ) -> None:
         await self.close()
+        if self._task_group is not None:
+            await self._task_group.__aexit__(exc_type, exc, tb)
 
     async def connect(self) -> None:
         """Start the server (for stdio) and run the MCP handshake."""
-        self._stack = AsyncExitStack()
-        # Used for the handshake and listing calls. Tool calls pass their own timeout.
-        timeout = self.config.startup_timeout_s
-        try:
-            if self.config.url:
-                client = Client(self.config.url, cache=None, read_timeout_seconds=timeout)
-            else:
-                # Server logs go to a temp file so they don't clutter our output.
-                # We show the tail of it if the server dies.
-                log_file = tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace")  # noqa: SIM115
-                self._stderr = cast(TextIO, self._stack.enter_context(log_file))
-                command = self.config.command or []
-                params = StdioServerParameters(
-                    command=command[0],
-                    args=command[1:],
-                    env=self.config.env or None,
-                    cwd=self._resolve_cwd(),
-                )
-                client = Client(
-                    stdio_client(params, errlog=self._stderr),
-                    cache=None,
-                    read_timeout_seconds=timeout,
-                )
-            self._client = await self._stack.enter_async_context(client)
-            # The SDK raises RuntimeError when structured output doesn't match the
-            # tool's outputSchema. We check that ourselves and report it as a test
-            # failure (with the actual output), so switch the SDK check off.
-            self._client.session.validate_tool_result = _skip_validation  # type: ignore[method-assign]
-        except Exception as exc:
+        if self._task_group is None:
+            raise ServerError("use McpServer as an async context manager")
+        ready = anyio.Event()
+        errors: list[Exception] = []
+        self._stop, self._stopped = anyio.Event(), anyio.Event()
+        if not self.config.url:
+            # Server logs go to a temp file so they don't clutter our output.
+            # We show the tail of it if the server dies.
+            log_file = tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace")  # noqa: SIM115
+            self._stderr = cast(TextIO, log_file)
+        self._task_group.start_soon(self._hold_connection, ready, errors)
+        await ready.wait()
+        if errors:
             stderr = self.stderr_tail()
             await self.close()
-            message = f"could not connect to server: {_describe(exc)}"
+            message = f"could not connect to server: {_describe(errors[0])}"
             if stderr:
                 message += f"\nserver stderr:\n{stderr}"
-            raise ServerError(message) from exc
+            raise ServerError(message) from errors[0]
+
+    async def _hold_connection(self, ready: anyio.Event, errors: list[Exception]) -> None:
+        """Open the client, then keep it open until close() is called."""
+        assert self._stop is not None and self._stopped is not None
+        stop, stopped = self._stop, self._stopped
+        try:
+            async with self._make_client() as client:
+                # The SDK raises RuntimeError when structured output doesn't match the
+                # tool's outputSchema. We check that ourselves and report it as a test
+                # failure (with the actual output), so switch the SDK check off.
+                client.session.validate_tool_result = _skip_validation  # type: ignore[method-assign]
+                self._client = client
+                ready.set()
+                await stop.wait()
+        except Exception as exc:
+            # Before `ready` this is a startup failure. After it, the server went
+            # away while connected; the failed call already reported that.
+            if not ready.is_set():
+                errors.append(exc)
+        finally:
+            self._client = None
+            ready.set()
+            stopped.set()
+
+    def _make_client(self) -> Client:
+        # Used for the handshake and listing calls. Tool calls pass their own timeout.
+        timeout = self.config.startup_timeout_s
+        if self.config.url:
+            return Client(self.config.url, cache=None, read_timeout_seconds=timeout)
+        command = self.config.command or []
+        params = StdioServerParameters(
+            command=command[0],
+            args=command[1:],
+            env=self.config.env or None,
+            cwd=self._resolve_cwd(),
+        )
+        return Client(
+            stdio_client(params, errlog=self._stderr or sys.stderr),
+            cache=None,
+            read_timeout_seconds=timeout,
+        )
 
     async def close(self) -> None:
         """Close the connection and stop the server process."""
-        stack, self._stack, self._client = self._stack, None, None
-        if stack is not None:
-            # The server may already be dead; nothing useful to do if closing fails.
-            with contextlib.suppress(Exception):
-                await stack.aclose()
+        if self._stop is not None and self._stopped is not None:
+            self._stop.set()
+            await self._stopped.wait()
+        self._stop = self._stopped = None
+        if self._stderr is not None:
+            self._stderr.close()
+            self._stderr = None
 
     async def reconnect(self) -> None:
         """Restart the connection, e.g. after the server crashed."""
@@ -244,6 +285,7 @@ class McpServer:
                     structured=None,
                     latency_ms=latency,
                     protocol_error=True,
+                    error_code=exc.error.code,
                 )
             return self._failed(
                 tool,
