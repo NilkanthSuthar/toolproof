@@ -113,3 +113,89 @@ def test_run_bad_config_exits_2(tmp_path):
     path.write_text("tests: []\n")
     result = runner.invoke(app, ["run", str(path)])
     assert result.exit_code == 2
+
+
+def test_fuzz_command_reports_crash(tmp_path):
+    junit = tmp_path / "fuzz.xml"
+    result = runner.invoke(
+        app,
+        [
+            "fuzz",
+            "--tool",
+            "get_weather",
+            "--examples",
+            "15",
+            "--seed",
+            "1",
+            "--junit",
+            str(junit),
+            "--",
+            sys.executable,
+            BUGGY,
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "crash (valid)" in result.stdout
+    assert "--seed 1" in result.stdout
+
+    suites = {s.get("name"): s for s in ET.parse(junit).getroot().findall("testsuite")}
+    assert list(suites) == ["fuzz"]  # only the phase that ran
+    assert suites["fuzz"].get("failures") == "1"
+
+
+def test_fuzz_command_passes_on_good_server():
+    result = runner.invoke(app, ["fuzz", "--examples", "10", "--", sys.executable, WEATHER])
+    assert result.exit_code == 0, result.output
+
+
+def test_bench_command(tmp_path):
+    json_out = tmp_path / "bench.json"
+    args = [
+        "bench",
+        "--tool",
+        "get_weather",
+        "--args",
+        '{"city": "Toronto"}',
+        "--calls",
+        "20",
+        "--concurrency",
+        "4",
+        "--json",
+        str(json_out),
+        "--",
+        sys.executable,
+        WEATHER,
+    ]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    [b] = json.loads(json_out.read_text())["bench"]
+    assert b["calls"] == 20 and b["errors"] == 0
+
+    result = runner.invoke(app, [*args[:-2], "--p50-ms", "0.001", "--", sys.executable, WEATHER])
+    assert result.exit_code == 1
+
+
+def test_bench_needs_something_to_run():
+    result = runner.invoke(app, ["bench", "--", sys.executable, WEATHER])
+    assert result.exit_code == 2
+
+
+def test_run_includes_bench_and_fuzz_sections(tmp_path):
+    path = tmp_path / "toolproof.yaml"
+    data = {
+        "server": {"command": [sys.executable, WEATHER]},
+        "tests": [{"name": "toronto", "tool": "get_weather", "args": {"city": "Toronto"}}],
+        "bench": {"calls": 10},
+        "fuzz": {"max_examples": 5, "seed": 1},
+    }
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    junit = tmp_path / "out.xml"
+
+    result = runner.invoke(app, ["run", str(path), "--junit", str(junit)])
+    assert result.exit_code == 0, result.output
+    names = [s.get("name") for s in ET.parse(junit).getroot().findall("testsuite")]
+    assert names == ["static checks", "tests", "bench", "fuzz"]
+
+    result = runner.invoke(app, ["run", str(path), "--skip-fuzz", "--junit", str(junit)])
+    names = [s.get("name") for s in ET.parse(junit).getroot().findall("testsuite")]
+    assert names == ["static checks", "tests", "bench"]
