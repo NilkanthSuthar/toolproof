@@ -62,21 +62,99 @@ def print_report(report: RunReport, console: Console | None = None) -> None:
                 console.print(test.server_stderr, markup=False, highlight=False)
                 console.print()
 
+    if report.bench:
+        _print_bench(report, console)
+    if report.fuzz:
+        _print_fuzz(report, console)
+
     if report.error:
         console.print(f"[red bold]Error:[/red bold] {report.error}", markup=True)
 
     console.print(_summary_line(report))
 
 
+def _print_bench(report: RunReport, console: Console) -> None:
+    table = Table(title="Bench", title_justify="left")
+    table.add_column("", width=4)
+    table.add_column("Target")
+    table.add_column("Calls", justify="right")
+    table.add_column("p50", justify="right")
+    table.add_column("p95", justify="right")
+    table.add_column("p99", justify="right")
+    table.add_column("Calls/s", justify="right")
+    table.add_column("Errors", justify="right")
+    table.add_column("Details")
+    for b in report.bench:
+        mark = Text("PASS", style="green") if b.passed else Text("FAIL", style="red")
+        details = "\n".join(b.failures)
+        if b.first_error:
+            details = (details + f"\nfirst error: {b.first_error}").strip()
+        table.add_row(
+            mark,
+            b.name,
+            f"{b.calls} x{b.concurrency}",
+            f"{b.p50_ms:.1f}ms",
+            f"{b.p95_ms:.1f}ms",
+            f"{b.p99_ms:.1f}ms",
+            f"{b.throughput:.1f}",
+            f"{b.error_rate:.1%}",
+            details,
+        )
+    console.print(table)
+    console.print()
+
+
+def _print_fuzz(report: RunReport, console: Console) -> None:
+    table = Table(title=f"Fuzz (seed {report.fuzz_seed})", title_justify="left")
+    table.add_column("", width=4)
+    table.add_column("Tool")
+    table.add_column("Calls", justify="right")
+    table.add_column("Finding")
+    table.add_column("Smallest input")
+    table.add_column("Details")
+    for f in report.fuzz:
+        if f.skipped:
+            table.add_row(Text("SKIP", style="yellow"), f.tool, str(f.calls), "", "", f.skipped)
+            continue
+        if not f.findings:
+            table.add_row(Text("PASS", style="green"), f.tool, str(f.calls), "", "", "")
+            continue
+        for i, finding in enumerate(f.findings):
+            table.add_row(
+                Text("FAIL", style="red") if i == 0 else "",
+                f.tool if i == 0 else "",
+                str(f.calls) if i == 0 else "",
+                f"{finding.kind} ({finding.mode})",
+                _short_json(finding.input),
+                finding.detail.splitlines()[0] if finding.detail else "",
+            )
+    console.print(table)
+    console.print(f"Repeat this run with --seed {report.fuzz_seed}\n")
+
+
+def _short_json(value: Any, limit: int = 60) -> str:
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 def _summary_line(report: RunReport) -> str:
-    errors = sum(1 for c in report.checks if c.severity == "error")
-    warnings = len(report.checks) - errors
-    passed = len(report.tests) - report.tests_failed
     status = "[green bold]PASSED[/green bold]" if report.passed else "[red bold]FAILED[/red bold]"
-    return (
-        f"{status}  tests: {passed} passed, {report.tests_failed} failed  |  "
-        f"checks: {errors} errors, {warnings} warnings  |  {report.duration_s:.2f}s"
-    )
+    parts = [status]
+    if "tests" in report.phases:
+        passed = len(report.tests) - report.tests_failed
+        parts.append(f"tests: {passed} passed, {report.tests_failed} failed")
+    if "checks" in report.phases:
+        errors = sum(1 for c in report.checks if c.severity == "error")
+        parts.append(f"checks: {errors} errors, {len(report.checks) - errors} warnings")
+    if "bench" in report.phases:
+        failed = sum(1 for b in report.bench if not b.passed)
+        parts.append(f"bench: {len(report.bench) - failed} passed, {failed} failed")
+    if "fuzz" in report.phases:
+        findings = sum(len(f.findings) for f in report.fuzz)
+        failed = sum(1 for f in report.fuzz if not f.passed)
+        parts.append(f"fuzz: {findings} findings in {failed} tools")
+    parts.append(f"{report.duration_s:.2f}s")
+    return "  |  ".join(parts)
 
 
 # ---------- JUnit XML ----------
@@ -85,11 +163,25 @@ def _summary_line(report: RunReport) -> str:
 def write_junit(report: RunReport, path: str | Path) -> None:
     """Write a JUnit XML file that CI systems (GitHub, GitLab, Jenkins) can display.
 
-    Static checks become one test case per tool in a "static checks" suite.
-    Test cases go in a "tests" suite.
+    Each phase that ran gets its own suite: "static checks" and "fuzz" have one
+    test case per tool, "tests" one per test case, "bench" one per target.
     """
     root = ET.Element("testsuites", name="toolproof")
+    if "checks" in report.phases:
+        _junit_checks(root, report)
+    if "tests" in report.phases or report.error:
+        _junit_tests(root, report)
+    if "bench" in report.phases:
+        _junit_bench(root, report)
+    if "fuzz" in report.phases:
+        _junit_fuzz(root, report)
 
+    tree = ET.ElementTree(root)
+    ET.indent(tree)
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def _junit_checks(root: ET.Element, report: RunReport) -> None:
     checks_suite = ET.SubElement(root, "testsuite", name="static checks")
     by_tool: dict[str, list[str]] = {name: [] for name in report.tool_names}
     for check in report.checks:
@@ -103,6 +195,8 @@ def write_junit(report: RunReport, path: str | Path) -> None:
     failed_tools = sum(1 for messages in by_tool.values() if messages)
     _set_counts(checks_suite, total=len(by_tool), failures=failed_tools, time_s=0.0)
 
+
+def _junit_tests(root: ET.Element, report: RunReport) -> None:
     tests_suite = ET.SubElement(root, "testsuite", name="tests")
     for test in report.tests:
         case = ET.SubElement(
@@ -128,17 +222,74 @@ def write_junit(report: RunReport, path: str | Path) -> None:
         time_s=sum(t.latency_ms for t in report.tests) / 1000,
     )
 
-    tree = ET.ElementTree(root)
-    ET.indent(tree)
-    tree.write(path, encoding="utf-8", xml_declaration=True)
+
+def _junit_bench(root: ET.Element, report: RunReport) -> None:
+    suite = ET.SubElement(root, "testsuite", name="bench")
+    for b in report.bench:
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            classname=f"toolproof.bench.{b.tool}",
+            name=b.name,
+            time=f"{b.duration_s:.3f}",
+        )
+        ET.SubElement(case, "system-out").text = (
+            f"calls={b.calls} concurrency={b.concurrency} p50={b.p50_ms:.1f}ms "
+            f"p95={b.p95_ms:.1f}ms p99={b.p99_ms:.1f}ms throughput={b.throughput:.1f}/s "
+            f"error_rate={b.error_rate:.2%}"
+        )
+        if not b.passed:
+            failure = ET.SubElement(case, "failure", message=b.failures[0])
+            failure.text = "\n".join(b.failures)
+    failed = sum(1 for b in report.bench if not b.passed)
+    _set_counts(
+        suite,
+        total=len(report.bench),
+        failures=failed,
+        time_s=sum(b.duration_s for b in report.bench),
+    )
+
+
+def _junit_fuzz(root: ET.Element, report: RunReport) -> None:
+    suite = ET.SubElement(root, "testsuite", name="fuzz")
+    for f in report.fuzz:
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            classname="toolproof.fuzz",
+            name=f.tool,
+            time=f"{f.duration_s:.3f}",
+        )
+        if f.skipped:
+            ET.SubElement(case, "skipped", message=f.skipped)
+        elif f.findings:
+            lines = [
+                f"[{x.kind}, {x.mode} input] {_short_json(x.input, 500)}: {x.detail}"
+                for x in f.findings
+            ]
+            failure = ET.SubElement(case, "failure", message=lines[0])
+            failure.text = "\n".join(lines) + f"\n(seed {report.fuzz_seed})"
+    _set_counts(
+        suite,
+        total=len(report.fuzz),
+        failures=sum(1 for f in report.fuzz if not f.passed),
+        skipped=sum(1 for f in report.fuzz if f.skipped),
+        time_s=sum(f.duration_s for f in report.fuzz),
+    )
 
 
 def _set_counts(
-    suite: ET.Element, total: int, failures: int, time_s: float, errors: int = 0
+    suite: ET.Element,
+    total: int,
+    failures: int,
+    time_s: float,
+    errors: int = 0,
+    skipped: int = 0,
 ) -> None:
     suite.set("tests", str(total))
     suite.set("failures", str(failures))
     suite.set("errors", str(errors))
+    suite.set("skipped", str(skipped))
     suite.set("time", f"{time_s:.3f}")
 
 
@@ -176,11 +327,51 @@ def report_to_dict(report: RunReport) -> dict[str, Any]:
             }
             for t in report.tests
         ],
+        "bench": [
+            {
+                "name": b.name,
+                "tool": b.tool,
+                "passed": b.passed,
+                "failures": b.failures,
+                "calls": b.calls,
+                "concurrency": b.concurrency,
+                "errors": b.errors,
+                "error_rate": round(b.error_rate, 4),
+                "throughput": round(b.throughput, 2),
+                "p50_ms": round(b.p50_ms, 2),
+                "p95_ms": round(b.p95_ms, 2),
+                "p99_ms": round(b.p99_ms, 2),
+                "mean_ms": round(b.mean_ms, 2),
+                "max_ms": round(b.max_ms, 2),
+                "first_error": b.first_error,
+            }
+            for b in report.bench
+        ],
+        "fuzz": {
+            "seed": report.fuzz_seed,
+            "tools": [
+                {
+                    "tool": f.tool,
+                    "passed": f.passed,
+                    "calls": f.calls,
+                    "skipped": f.skipped,
+                    "duration_s": round(f.duration_s, 2),
+                    "findings": [
+                        {"kind": x.kind, "mode": x.mode, "input": x.input, "detail": x.detail}
+                        for x in f.findings
+                    ],
+                }
+                for f in report.fuzz
+            ],
+        },
         "summary": {
+            "phases": report.phases,
             "tests": len(report.tests),
             "failed": report.tests_failed,
             "check_errors": sum(1 for c in report.checks if c.severity == "error"),
             "check_warnings": sum(1 for c in report.checks if c.severity == "warning"),
+            "bench_failed": sum(1 for b in report.bench if not b.passed),
+            "fuzz_findings": sum(len(f.findings) for f in report.fuzz),
         },
     }
 

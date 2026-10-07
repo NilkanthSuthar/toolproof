@@ -1,4 +1,4 @@
-"""Command line interface: `toolproof inspect` and `toolproof run`."""
+"""Command line interface: inspect, run, fuzz and bench."""
 
 from __future__ import annotations
 
@@ -14,9 +14,17 @@ from rich.table import Table
 from toolproof import __version__
 from toolproof.checks import CheckResult, run_checks
 from toolproof.client import McpServer, ServerError, ServerInfo
-from toolproof.config import ChecksConfig, ConfigError, ServerConfig, load_config
+from toolproof.config import (
+    BenchConfig,
+    BenchTarget,
+    Config,
+    ConfigError,
+    FuzzConfig,
+    ServerConfig,
+    load_config,
+)
 from toolproof.reporters import print_report, write_json, write_junit
-from toolproof.runner import run_config
+from toolproof.runner import RunReport, default_phases, run_config
 
 app = typer.Typer(
     help="Automated tests for MCP servers.",
@@ -25,6 +33,21 @@ app = typer.Typer(
 )
 console = Console()
 err_console = Console(stderr=True)
+
+DEFAULT_CONFIG = Path("toolproof.yaml")
+
+# Options shared by several commands.
+CommandArg = Annotated[
+    list[str] | None,
+    typer.Argument(help="Server command to run over stdio, after `--`."),
+]
+UrlOpt = Annotated[str | None, typer.Option(help="Streamable HTTP URL of the server.")]
+ConfigOpt = Annotated[
+    Path | None,
+    typer.Option("--config", "-c", help="Read the server and settings from a toolproof.yaml."),
+]
+JunitOpt = Annotated[Path | None, typer.Option(help="Write a JUnit XML report to this path.")]
+JsonOpt = Annotated[Path | None, typer.Option("--json", help="Write a JSON report to this path.")]
 
 
 def _version(value: bool) -> None:
@@ -45,15 +68,9 @@ def main(
 
 @app.command()
 def inspect(
-    command: Annotated[
-        list[str] | None,
-        typer.Argument(help="Server command to run over stdio, after `--`."),
-    ] = None,
-    url: Annotated[str | None, typer.Option(help="Streamable HTTP URL of the server.")] = None,
-    config: Annotated[
-        Path | None,
-        typer.Option("--config", "-c", help="Read the server from a toolproof.yaml file."),
-    ] = None,
+    command: CommandArg = None,
+    url: UrlOpt = None,
+    config_path: ConfigOpt = None,
     as_json: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
 ) -> None:
     """List a server's tools, resources and prompts, and run the static checks.
@@ -64,10 +81,10 @@ def inspect(
 
         toolproof inspect --url http://localhost:8000/mcp
     """
-    server_config, base_dir, checks_config = _server_from_args(command, url, config)
+    config = _config_from_args(command, url, config_path)
 
     async def fetch() -> ServerInfo:
-        async with McpServer(server_config, base_dir=base_dir) as server:
+        async with McpServer(config.server, base_dir=config.base_dir) as server:
             return await server.server_info()
 
     try:
@@ -76,7 +93,7 @@ def inspect(
         err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(2) from exc
 
-    problems = run_checks(info.tools, checks_config)
+    problems = run_checks(info.tools, config.checks)
     if as_json:
         print(json.dumps(_info_to_dict(info, problems), indent=2))
     else:
@@ -87,13 +104,9 @@ def inspect(
 def run(
     config_path: Annotated[
         Path, typer.Argument(metavar="CONFIG", help="Path to the test file.")
-    ] = Path("toolproof.yaml"),
-    junit: Annotated[
-        Path | None, typer.Option(help="Write a JUnit XML report to this path.")
-    ] = None,
-    json_out: Annotated[
-        Path | None, typer.Option("--json", help="Write a JSON report to this path.")
-    ] = None,
+    ] = DEFAULT_CONFIG,
+    junit: JunitOpt = None,
+    json_out: JsonOpt = None,
     timeout_ms: Annotated[
         float | None, typer.Option(help="Default per-test timeout in milliseconds.")
     ] = None,
@@ -102,14 +115,14 @@ def run(
     ] = None,
     strict: Annotated[bool, typer.Option(help="Treat static check warnings as failures.")] = False,
     checks: Annotated[bool, typer.Option(help="Run the static checks.")] = True,
+    skip_bench: Annotated[bool, typer.Option(help="Skip the bench section.")] = False,
+    skip_fuzz: Annotated[bool, typer.Option(help="Skip the fuzz section.")] = False,
 ) -> None:
-    """Run static checks and the test cases in CONFIG. Exits 1 if anything fails."""
-    try:
-        config = load_config(config_path)
-    except ConfigError as exc:
-        err_console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(2) from exc
+    """Run everything in CONFIG: static checks, tests, and bench/fuzz if configured.
 
+    Exits 1 if anything fails.
+    """
+    config = _load(config_path)
     if timeout_ms is not None:
         config.timeout_ms = timeout_ms
     if retries is not None:
@@ -119,39 +132,176 @@ def run(
     if not checks:
         config.checks.enabled = False
 
-    report = run_config(config)
-    print_report(report, console)
+    phases = default_phases(config)
+    if skip_bench and "bench" in phases:
+        phases.remove("bench")
+    if skip_fuzz and "fuzz" in phases:
+        phases.remove("fuzz")
+    _finish(run_config(config, phases), junit, json_out)
 
+
+@app.command()
+def fuzz(
+    command: CommandArg = None,
+    url: UrlOpt = None,
+    config_path: ConfigOpt = None,
+    examples: Annotated[
+        int | None, typer.Option(help="Inputs per tool, for valid and for invalid inputs.")
+    ] = None,
+    timeout_ms: Annotated[float | None, typer.Option(help="Timeout per call.")] = None,
+    max_time: Annotated[float | None, typer.Option(help="Time limit per tool in seconds.")] = None,
+    seed: Annotated[int | None, typer.Option(help="Random seed, to repeat a run.")] = None,
+    tool: Annotated[
+        list[str] | None, typer.Option(help="Only fuzz this tool. Can be repeated.")
+    ] = None,
+    include_destructive: Annotated[
+        bool, typer.Option(help="Also fuzz tools marked destructive.")
+    ] = False,
+    valid_must_succeed: Annotated[
+        bool, typer.Option(help="Count error results for valid inputs as failures.")
+    ] = False,
+    junit: JunitOpt = None,
+    json_out: JsonOpt = None,
+) -> None:
+    """Call every tool with generated inputs and report crashes, hangs and bad errors.
+
+    Examples:
+
+        toolproof fuzz -- python server.py
+
+        toolproof fuzz -c toolproof.yaml --examples 200 --seed 42
+    """
+    config = _config_from_args(command, url, config_path)
+    fz = config.fuzz or FuzzConfig()
+    if examples is not None:
+        fz.max_examples = examples
+    if timeout_ms is not None:
+        fz.timeout_ms = timeout_ms
+    if max_time is not None:
+        fz.max_time_s = max_time
+    if seed is not None:
+        fz.seed = seed
+    if tool:
+        fz.tools = tool
+    if include_destructive:
+        fz.include_destructive = True
+    if valid_must_succeed:
+        fz.valid_must_succeed = True
+    config.fuzz = fz
+    _finish(run_config(config, ["fuzz"]), junit, json_out)
+
+
+@app.command()
+def bench(
+    command: CommandArg = None,
+    url: UrlOpt = None,
+    config_path: ConfigOpt = None,
+    tool: Annotated[str | None, typer.Option(help="Benchmark just this tool.")] = None,
+    args: Annotated[str | None, typer.Option(help="Arguments for --tool as a JSON object.")] = None,
+    calls: Annotated[int | None, typer.Option(help="Calls per target.")] = None,
+    concurrency: Annotated[int | None, typer.Option(help="Calls in flight at once.")] = None,
+    timeout_ms: Annotated[float | None, typer.Option(help="Timeout per call.")] = None,
+    p50_ms: Annotated[float | None, typer.Option(help="Fail if p50 is above this.")] = None,
+    p95_ms: Annotated[float | None, typer.Option(help="Fail if p95 is above this.")] = None,
+    p99_ms: Annotated[float | None, typer.Option(help="Fail if p99 is above this.")] = None,
+    max_error_rate: Annotated[
+        float | None, typer.Option(help="Fail if the error rate is above this (0.01 = 1%).")
+    ] = None,
+    min_throughput: Annotated[
+        float | None, typer.Option(help="Fail if calls per second is below this.")
+    ] = None,
+    junit: JunitOpt = None,
+    json_out: JsonOpt = None,
+) -> None:
+    """Measure latency (p50/p95/p99), throughput and error rate.
+
+    Without --tool, benchmarks the bench targets in the config, or every test
+    case that expects success.
+
+    Examples:
+
+        toolproof bench -c toolproof.yaml --calls 500 --concurrency 20
+
+        toolproof bench --tool get_weather --args '{"city": "Toronto"}' -- python server.py
+    """
+    config = _config_from_args(command, url, config_path)
+    bc = config.bench or BenchConfig()
+    if tool:
+        try:
+            parsed = json.loads(args) if args else {}
+        except json.JSONDecodeError as exc:
+            err_console.print(f"[red]--args is not valid JSON: {exc}[/red]")
+            raise typer.Exit(2) from exc
+        bc.targets = [BenchTarget(tool=tool, args=parsed)]
+    if calls is not None:
+        bc.calls = calls
+    if concurrency is not None:
+        bc.concurrency = concurrency
+    if timeout_ms is not None:
+        bc.timeout_ms = timeout_ms
+    overrides = {
+        "p50_ms": p50_ms,
+        "p95_ms": p95_ms,
+        "p99_ms": p99_ms,
+        "max_error_rate": max_error_rate,
+        "min_throughput": min_throughput,
+    }
+    for name, value in overrides.items():
+        if value is not None:
+            setattr(bc.thresholds, name, value)
+    if not bc.targets and not any(t.expect.is_error is not True for t in config.tests):
+        err_console.print(
+            "[red]Nothing to benchmark. Pass --tool, or add tests or bench targets.[/red]"
+        )
+        raise typer.Exit(2)
+    config.bench = bc
+    _finish(run_config(config, ["bench"]), junit, json_out)
+
+
+def _finish(report: RunReport, junit: Path | None, json_out: Path | None) -> None:
+    """Print the report, write report files and exit with the right code."""
+    print_report(report, console)
     if junit:
         write_junit(report, junit)
         console.print(f"JUnit report written to {junit}")
     if json_out:
         write_json(report, json_out)
         console.print(f"JSON report written to {json_out}")
-
     raise typer.Exit(0 if report.passed else 1)
 
 
-def _server_from_args(
+def _load(path: Path) -> Config:
+    try:
+        return load_config(path)
+    except ConfigError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from exc
+
+
+def _config_from_args(
     command: list[str] | None, url: str | None, config_path: Path | None
-) -> tuple[ServerConfig, Path, ChecksConfig]:
-    """Work out which server `inspect` should talk to."""
-    if config_path is not None:
-        try:
-            config = load_config(config_path)
-        except ConfigError as exc:
-            err_console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(2) from exc
-        return config.server, config.base_dir, config.checks
-    if bool(command) == bool(url):
-        err_console.print(
-            "[red]Give a server command after `--`, or --url, or --config.[/red]\n"
-            "Example: toolproof inspect -- python server.py"
-        )
+) -> Config:
+    """Build a config from `-- command`, `--url` or a YAML file.
+
+    With none of them, falls back to ./toolproof.yaml if it exists.
+    """
+    given = sum(1 for x in (command, url, config_path) if x)
+    if given > 1:
+        err_console.print("[red]Give only one of: a command after `--`, --url, --config.[/red]")
         raise typer.Exit(2)
+    if config_path is not None:
+        return _load(config_path)
     if url:
-        return ServerConfig(url=url), Path.cwd(), ChecksConfig()
-    return ServerConfig(command=command), Path.cwd(), ChecksConfig()
+        return Config(server=ServerConfig(url=url))
+    if command:
+        return Config(server=ServerConfig(command=command))
+    if DEFAULT_CONFIG.exists():
+        return _load(DEFAULT_CONFIG)
+    err_console.print(
+        "[red]Give a server command after `--`, or --url, or --config.[/red]\n"
+        "Example: toolproof inspect -- python server.py"
+    )
+    raise typer.Exit(2)
 
 
 def _print_info(info: ServerInfo, problems: list[CheckResult]) -> None:
