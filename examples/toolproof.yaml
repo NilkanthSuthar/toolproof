@@ -51,3 +51,16 @@ tests:
     tool: list_cities
     expect:
       equals: { result: [Calgary, Montreal, Toronto, Vancouver] }
+
+# Benchmark every test case above that expects success.
+bench:
+  calls: 50
+  concurrency: 5
+  thresholds:
+    p95_ms: 500
+    max_error_rate: 0
+
+# Call every tool with generated inputs and look for crashes, hangs and bad errors.
+fuzz:
+  max_examples: 30
+  seed: 1

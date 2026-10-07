@@ -9,6 +9,8 @@
 - **Static checks** on every tool definition: missing descriptions, invalid JSON Schemas, duplicate names, required fields that don't exist
 - **YAML test cases**: call a tool and assert on errors, text, regex, JSONPath values, latency and the declared `outputSchema`
 - **Crash detection**: if the server dies mid-test, toolproof reports it with the server's stderr, restarts the server and keeps going
+- **Fuzzing**: generates valid and invalid inputs from each tool's schema with Hypothesis, finds crashes, hangs and leaked tracebacks, and shrinks each one to the smallest failing input
+- **Benchmarks**: p50/p95/p99 latency, throughput and error rate under concurrency, with thresholds that fail the build
 - **CI-friendly output**: exit code 0/1, JUnit XML and JSON reports
 - **pytest plugin**: an `mcp_server` fixture for tests written in Python
 - Works with any server over **stdio** or **streamable HTTP**, in any language
@@ -56,6 +58,13 @@ Run it:
 
 ```bash
 toolproof run toolproof.yaml --junit report.xml
+```
+
+Fuzz and benchmark it, no test cases needed:
+
+```bash
+toolproof fuzz -- python my_server.py
+toolproof bench --tool get_weather --args '{"city": "Toronto"}' -- python my_server.py
 ```
 
 ## What a failing run looks like
@@ -140,6 +149,33 @@ tests:
         "$.wind": { exists: false }
       max_latency_ms: 2000
       output_schema: true            # validate against the tool's outputSchema (default on)
+
+bench:                   # optional; `toolproof run` includes it when present
+  calls: 100             # per target
+  concurrency: 10
+  warmup: 3
+  timeout_ms: 10000
+  thresholds:            # all optional
+    p50_ms: 50
+    p95_ms: 200
+    p99_ms: 500
+    max_error_rate: 0.01
+    min_throughput: 100  # calls per second
+  targets:               # default: every test case that expects success
+    - tool: get_weather
+      args: { city: Toronto }
+      thresholds: { p95_ms: 100 }   # per-target override
+
+fuzz:                    # optional; `toolproof run` includes it when present
+  max_examples: 50       # per tool, for valid and for invalid inputs
+  timeout_ms: 2000
+  max_time_s: 60         # per tool
+  seed: 1                # fix it for repeatable CI runs
+  tools: []              # only these (default: all)
+  skip: [send_email]
+  include_destructive: false
+  valid_must_succeed: false
+  invalid_must_fail: true
 ```
 
 Notes:
@@ -164,14 +200,86 @@ Notes:
 
 Errors fail the run. Warnings only fail it with `--strict`.
 
+## Fuzzing
+
+`toolproof fuzz` calls every tool with inputs generated from its input schema, using [Hypothesis](https://hypothesis.readthedocs.io) and [hypothesis-jsonschema](https://github.com/python-jsonschema/hypothesis-jsonschema):
+
+- **valid inputs** match the schema, mixed with edge cases that still match it: empty, whitespace, huge (100k characters), emoji, right-to-left text, null bytes, SQL and path-traversal strings
+- **invalid inputs** take a valid input and break it: drop a required field, set a field to `null`, or give it the wrong type
+
+Each call is judged like this:
+
+| Finding | Meaning |
+|---|---|
+| `crash` | the server process died or the connection dropped |
+| `hang` | no answer within `timeout_ms` |
+| `internal-error` | a JSON-RPC error other than "invalid params" |
+| `unhandled-exception` | an error result that leaks a traceback or the SDK's generic crash message |
+| `output-schema` | a successful result that doesn't match the tool's `outputSchema` |
+| `rejected-valid` | a schema-valid input rejected as invalid params |
+| `accepted-invalid` | an invalid input that returned success (turn off with `invalid_must_fail: false`) |
+| `unexpected-error` | any error for a valid input (only with `valid_must_succeed: true`) |
+| `bad-schema` | the input schema is broken, so no inputs can be generated |
+
+Hypothesis shrinks every failure, so you get the smallest input that triggers it. Crashed servers are restarted automatically. Every run prints its seed; pass `--seed` to repeat it exactly.
+
+Running it on `examples/buggy_server.py` finds all five planted bugs with no hand-written tests:
+
+```
+Fuzz (seed 3)
+┌──────┬─────────────────┬───────┬────────────────────────────┬─────────────────┬───────────────────────────────────────────────┐
+│      │ Tool            │ Calls │ Finding                    │ Smallest input  │ Details                                       │
+├──────┼─────────────────┼───────┼────────────────────────────┼─────────────────┼───────────────────────────────────────────────┤
+│ FAIL │ get_weather     │    22 │ crash (valid)              │ {"city": ""}    │ connection lost, server probably crashed      │
+│      │                 │       │ accepted-invalid (invalid) │ {"city": []}    │ invalid input returned a success result       │
+│      │                 │       │ crash (invalid)            │ {}              │ connection lost, server probably crashed      │
+│ FAIL │ search_cities   │     0 │ bad-schema (valid)         │ {}              │ can't generate inputs: 'strng' is not valid   │
+│ FAIL │ slow_report     │     1 │ hang (valid)               │ {"city": ""}    │ timed out after 2.0s                          │
+│ FAIL │ get_temperature │    24 │ output-schema (valid)      │ {"city": ""}    │ output schema: $.temp_c: '12.5' is not of     │
+│      │                 │       │                            │                 │ type 'number'                                 │
+│      │                 │       │ accepted-invalid (invalid) │ {}              │ invalid input returned a success result       │
+│ FAIL │ lookup          │    15 │ internal-error (valid)     │ {"city_id": {}} │ JSON-RPC error -32603: Internal server error  │
+│      │                 │       │ internal-error (invalid)   │ {}              │ JSON-RPC error -32603: Internal server error  │
+└──────┴─────────────────┴───────┴────────────────────────────┴─────────────────┴───────────────────────────────────────────────┘
+Repeat this run with --seed 3
+```
+
+**Be careful with tools that change things.** Fuzzing calls every tool many times with odd arguments. Tools annotated with `destructiveHint: true` are skipped unless you pass `--include-destructive`. For anything else that sends email, deletes data or spends money, add it to `fuzz.skip` or point toolproof at a test instance.
+
+## Benchmarks
+
+`toolproof bench` calls each target `calls` times with `concurrency` calls in flight over one connection, after a few warm-up calls, and reports p50/p95/p99 latency, mean and max, calls per second and error rate:
+
+```
+Bench
+┌──────┬─────────────────────────────────┬───────┬───────┬────────┬────────┬─────────┬────────┬─────────┐
+│      │ Target                          │ Calls │   p50 │    p95 │    p99 │ Calls/s │ Errors │ Details │
+├──────┼─────────────────────────────────┼───────┼───────┼────────┼────────┼─────────┼────────┼─────────┤
+│ PASS │ toronto weather                 │ 50 x5 │ 8.3ms │ 10.8ms │ 11.9ms │   583.0 │   0.0% │         │
+│ PASS │ city names are case insensitive │ 50 x5 │ 8.8ms │ 24.5ms │ 24.9ms │   480.9 │   0.0% │         │
+│ PASS │ five day forecast               │ 50 x5 │ 9.3ms │ 20.1ms │ 21.3ms │   477.8 │   0.0% │         │
+│ PASS │ list cities                     │ 50 x5 │ 8.1ms │ 10.1ms │ 14.3ms │   600.7 │   0.0% │         │
+└──────┴─────────────────────────────────┴───────┴───────┴────────┴────────┴─────────┴────────┴─────────┘
+```
+
+Without `--tool` or `bench.targets`, every test case that expects success is benchmarked. A threshold that's broken fails the run, so you can catch a slow tool in CI.
+
 ## CLI reference
 
 ```
 toolproof inspect [--url URL | --config FILE | -- COMMAND...] [--json]
 toolproof run [CONFIG] [--junit PATH] [--json PATH] [--timeout-ms N] [--retries N] [--strict] [--no-checks]
+              [--skip-bench] [--skip-fuzz]
+toolproof fuzz [--url URL | --config FILE | -- COMMAND...] [--examples N] [--timeout-ms N] [--max-time S]
+               [--seed N] [--tool NAME]... [--include-destructive] [--valid-must-succeed] [--junit PATH] [--json PATH]
+toolproof bench [--url URL | --config FILE | -- COMMAND...] [--tool NAME --args JSON] [--calls N] [--concurrency N]
+                [--timeout-ms N] [--p50-ms N] [--p95-ms N] [--p99-ms N] [--max-error-rate R] [--min-throughput N]
+                [--junit PATH] [--json PATH]
 ```
 
-Exit codes for `run`: `0` all passed, `1` a test or check failed, `2` bad config or usage.
+`fuzz`, `bench` and `inspect` read `./toolproof.yaml` when no server is given. CLI flags override the YAML.
+
+Exit codes: `0` all passed, `1` a test, check, threshold or fuzz finding failed, `2` bad config or usage.
 
 ## pytest plugin
 
@@ -242,8 +350,9 @@ toolproof is for what comes after: tests you write once, keep in the repo and ru
 git clone https://github.com/NilkanthSuthar/toolproof
 cd toolproof
 pip install -e .
-toolproof run examples/toolproof.yaml   # passes
-toolproof run examples/buggy.yaml       # fails, on purpose
+toolproof run examples/toolproof.yaml          # passes: tests, bench and fuzz
+toolproof run examples/buggy.yaml              # fails, on purpose
+toolproof fuzz -- python examples/buggy_server.py   # finds all five planted bugs
 ```
 
 ## Roadmap

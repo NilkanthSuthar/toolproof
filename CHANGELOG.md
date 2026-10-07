@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 - 2026-10-07
+
+- `toolproof fuzz`: generates valid and invalid inputs from each tool's input schema with Hypothesis and reports crashes, hangs, internal errors, leaked tracebacks, outputSchema violations and invalid input that was accepted, each shrunk to the smallest failing input
+- Fuzzing restarts a crashed server and keeps going, skips tools marked destructive by default, and prints its seed so a run can be repeated
+- `toolproof bench`: p50/p95/p99 latency, throughput and error rate at a chosen concurrency, with thresholds that fail the run
+- `bench:` and `fuzz:` sections in toolproof.yaml; `toolproof run` includes them when present (`--skip-bench`, `--skip-fuzz`)
+- Fuzz and bench results in the console, JUnit and JSON reports
+- `fuzz`, `bench` and `inspect` fall back to `./toolproof.yaml` when no server is given
+
 ## 0.1.0 - 2026-10-06
 
 First release.
