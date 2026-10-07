@@ -97,6 +97,59 @@ class ChecksConfig(_Strict):
     strict: bool = False
 
 
+class FuzzConfig(_Strict):
+    """Settings for `toolproof fuzz`: random inputs generated from each tool's schema."""
+
+    enabled: bool = True
+    max_examples: int = 50  # per tool, for valid and for invalid inputs
+    timeout_ms: float = 2000
+    max_time_s: float = 60  # per tool, so a slow tool can't stall the run
+    seed: int | None = None
+    tools: list[str] = Field(default_factory=list)  # only fuzz these (empty = all)
+    skip: list[str] = Field(default_factory=list)
+    include_destructive: bool = False
+    valid_must_succeed: bool = False
+    invalid_must_fail: bool = True
+
+
+class BenchThresholds(_Strict):
+    """Limits that fail a benchmark. Unset limits aren't checked."""
+
+    p50_ms: float | None = None
+    p95_ms: float | None = None
+    p99_ms: float | None = None
+    max_error_rate: float | None = None  # 0.01 = 1%
+    min_throughput: float | None = None  # calls per second
+
+
+class BenchTarget(_Strict):
+    """One tool call to benchmark."""
+
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    name: str | None = None
+    thresholds: BenchThresholds | None = None
+
+    @property
+    def label(self) -> str:
+        return self.name or self.tool
+
+
+class BenchConfig(_Strict):
+    """Settings for `toolproof bench`.
+
+    With no targets, every test case that doesn't expect an error is benchmarked.
+    """
+
+    enabled: bool = True
+    calls: int = 100
+    concurrency: int = 10
+    warmup: int = 3
+    timeout_ms: float = 10_000
+    thresholds: BenchThresholds = Field(default_factory=BenchThresholds)
+    targets: list[BenchTarget] = Field(default_factory=list)
+
+
 class Config(_Strict):
     """The whole toolproof.yaml file."""
 
@@ -105,6 +158,8 @@ class Config(_Strict):
     retries: int = 0
     checks: ChecksConfig = Field(default_factory=ChecksConfig)
     tests: list[TestCase] = Field(default_factory=list)
+    fuzz: FuzzConfig | None = None
+    bench: BenchConfig | None = None
 
     # Directory of the YAML file. Relative paths in `command` and `cwd` resolve from here.
     base_dir: Path = Field(default_factory=Path.cwd, exclude=True)
