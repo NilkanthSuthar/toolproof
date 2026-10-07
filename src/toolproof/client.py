@@ -11,16 +11,19 @@ import json
 import sys
 import tempfile
 import time
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import Any, TextIO, cast
 
 import anyio
+import httpx2
 import mcp_types as types
 from anyio.abc import TaskGroup
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 
 from toolproof.config import ServerConfig
@@ -150,7 +153,8 @@ class McpServer:
         assert self._stop is not None and self._stopped is not None
         stop, stopped = self._stop, self._stopped
         try:
-            async with self._make_client() as client:
+            async with AsyncExitStack() as stack:
+                client = await stack.enter_async_context(await self._make_client(stack))
                 # The SDK raises RuntimeError when structured output doesn't match the
                 # tool's outputSchema. We check that ourselves and report it as a test
                 # failure (with the actual output), so switch the SDK check off.
@@ -168,9 +172,20 @@ class McpServer:
             ready.set()
             stopped.set()
 
-    def _make_client(self) -> Client:
+    async def _make_client(self, stack: AsyncExitStack) -> Client:
         # Used for the handshake and listing calls. Tool calls pass their own timeout.
         timeout = self.config.startup_timeout_s
+        if self.config.url and self.config.headers:
+            # Same timeouts the SDK uses for its own HTTP client: a long read
+            # timeout, because the server may hold a response stream open.
+            http = await stack.enter_async_context(
+                httpx2.AsyncClient(
+                    headers=self.config.headers,
+                    timeout=httpx2.Timeout(30, read=300),
+                )
+            )
+            transport = streamable_http_client(self.config.url, http_client=http)
+            return Client(transport, cache=None, read_timeout_seconds=timeout)
         if self.config.url:
             return Client(self.config.url, cache=None, read_timeout_seconds=timeout)
         command = self.config.command or []

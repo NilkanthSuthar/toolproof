@@ -15,6 +15,8 @@ Example:
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -39,6 +41,7 @@ class ServerConfig(_Strict):
     command: list[str] | None = None
     url: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
     cwd: str | None = None
     startup_timeout_s: float = 30
 
@@ -46,6 +49,8 @@ class ServerConfig(_Strict):
     def _one_transport(self) -> ServerConfig:
         if bool(self.command) == bool(self.url):
             raise ValueError("set exactly one of 'command' or 'url'")
+        if self.headers and not self.url:
+            raise ValueError("'headers' only applies to 'url' servers")
         return self
 
 
@@ -165,6 +170,25 @@ class Config(_Strict):
     base_dir: Path = Field(default_factory=Path.cwd, exclude=True)
 
 
+_ENV_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_env(value: Any) -> Any:
+    """Replace `${NAME}` with the environment variable NAME, in strings, lists and dicts.
+
+    Used for the `server:` section so secrets like API keys can come from the
+    CI environment instead of being written into toolproof.yaml.
+    Raises KeyError with the variable name if it isn't set.
+    """
+    if isinstance(value, str):
+        return _ENV_VAR.sub(lambda m: os.environ[m.group(1)], value)
+    if isinstance(value, list):
+        return [expand_env(v) for v in value]
+    if isinstance(value, dict):
+        return {k: expand_env(v) for k, v in value.items()}
+    return value
+
+
 def load_config(path: str | Path) -> Config:
     """Read and validate a toolproof.yaml file."""
     path = Path(path)
@@ -176,6 +200,14 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError(f"{path} is not valid YAML: {exc}") from exc
     if not isinstance(raw, dict):
         raise ConfigError(f"{path} should contain a mapping at the top level")
+    if isinstance(raw.get("server"), dict):
+        try:
+            raw["server"] = expand_env(raw["server"])
+        except KeyError as exc:
+            raise ConfigError(
+                f"{path}: environment variable {exc.args[0]} is not set "
+                f"(used as ${{{exc.args[0]}}} in 'server')"
+            ) from exc
     try:
         config = Config.model_validate(raw)
     except ValidationError as exc:

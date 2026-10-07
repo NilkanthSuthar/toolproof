@@ -44,3 +44,33 @@ def test_bad_yaml(tmp_path):
 def test_equals_null_counts_as_set():
     assert Expect.model_validate({"equals": None}).has_equals
     assert not Expect().has_equals
+
+
+def test_env_vars_are_expanded_in_server_section(tmp_path, monkeypatch):
+    monkeypatch.setenv("TP_TOKEN", "abc123")
+    monkeypatch.setenv("TP_HOST", "example.com")
+    path = tmp_path / "toolproof.yaml"
+    path.write_text(
+        "server:\n"
+        "  url: https://${TP_HOST}/mcp\n"
+        "  headers: { Authorization: 'Bearer ${TP_TOKEN}' }\n"
+        "tests:\n  - { name: x, tool: t, args: { note: '${TP_TOKEN}' } }\n"
+    )
+    config = load_config(path)
+    assert config.server.url == "https://example.com/mcp"
+    assert config.server.headers == {"Authorization": "Bearer abc123"}
+    # Only the server section is expanded; test data is left exactly as written.
+    assert config.tests[0].args == {"note": "${TP_TOKEN}"}
+
+
+def test_missing_env_var_is_a_clear_error(tmp_path, monkeypatch):
+    monkeypatch.delenv("TP_NOT_SET", raising=False)
+    path = tmp_path / "toolproof.yaml"
+    path.write_text("server:\n  command: [python, s.py]\n  env: { KEY: '${TP_NOT_SET}' }\n")
+    with pytest.raises(ConfigError, match="TP_NOT_SET is not set"):
+        load_config(path)
+
+
+def test_headers_need_a_url():
+    with pytest.raises(ValueError, match="headers"):
+        ServerConfig(command=["python", "s.py"], headers={"A": "b"})
