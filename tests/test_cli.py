@@ -199,3 +199,112 @@ def test_run_includes_bench_and_fuzz_sections(tmp_path):
     result = runner.invoke(app, ["run", str(path), "--skip-fuzz", "--junit", str(junit)])
     names = [s.get("name") for s in ET.parse(junit).getroot().findall("testsuite")]
     assert names == ["static checks", "tests", "bench"]
+
+
+def test_inspect_reports_a_server_that_wont_start(tmp_path):
+    script = tmp_path / "broken.py"
+    script.write_text("import sys\nsys.exit(3)\n")
+    result = runner.invoke(app, ["inspect", "--", sys.executable, str(script)])
+    assert result.exit_code == 2
+    assert "could not connect" in result.output
+
+
+def test_only_one_server_source_allowed():
+    result = runner.invoke(
+        app, ["inspect", "--url", "http://localhost:1/mcp", "--", sys.executable, WEATHER]
+    )
+    assert result.exit_code == 2
+    assert "only one" in result.output
+
+
+def test_falls_back_to_toolproof_yaml_in_cwd(tmp_path, monkeypatch):
+    write_yaml(tmp_path / "toolproof.yaml", WEATHER, [])
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["inspect", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["server"]["name"] == "weather"
+
+
+def test_no_server_and_no_config(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["fuzz"])
+    assert result.exit_code == 2
+    assert "Give a server command" in result.output
+
+
+def test_run_flag_overrides(tmp_path):
+    config = write_yaml(
+        tmp_path / "toolproof.yaml",
+        WEATHER,
+        [
+            {
+                "name": "atlantis",
+                "tool": "get_weather",
+                "args": {"city": "Atlantis"},
+                "expect": {"is_error": False},
+            }
+        ],
+    )
+    json_out = tmp_path / "out.json"
+    args = ["run", str(config), "--timeout-ms", "3000", "--retries", "1", "--strict"]
+    result = runner.invoke(app, [*args, "--skip-bench", "--json", str(json_out)])
+    assert result.exit_code == 1
+    assert json.loads(json_out.read_text())["tests"][0]["attempts"] == 2
+
+
+def test_fuzz_flags_reach_the_config(tmp_path):
+    json_out = tmp_path / "fuzz.json"
+    args = [
+        "fuzz",
+        "--tool",
+        "list_cities",
+        "--examples",
+        "3",
+        "--timeout-ms",
+        "3000",
+        "--max-time",
+        "30",
+        "--seed",
+        "7",
+        "--include-destructive",
+        "--valid-must-succeed",
+        "--json",
+        str(json_out),
+        "--",
+        sys.executable,
+        WEATHER,
+    ]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    data = json.loads(json_out.read_text())
+    assert data["fuzz"]["seed"] == 7
+    assert [t["tool"] for t in data["fuzz"]["tools"]] == ["list_cities"]
+
+
+def test_bench_rejects_bad_args_json():
+    result = runner.invoke(
+        app, ["bench", "--tool", "get_weather", "--args", "{city:", "--", sys.executable, WEATHER]
+    )
+    assert result.exit_code == 2
+    assert "not valid JSON" in result.output
+
+
+def test_bench_threshold_flags(tmp_path):
+    json_out = tmp_path / "bench.json"
+    base = ["bench", "--tool", "list_cities", "--calls", "10", "--timeout-ms", "5000"]
+    loose = ["--p95-ms", "5000", "--p99-ms", "5000", "--max-error-rate", "0"]
+    result = runner.invoke(app, [*base, *loose, "--", sys.executable, WEATHER])
+    assert result.exit_code == 0, result.output
+    strict = ["--min-throughput", "1000000", "--json", str(json_out)]
+    result = runner.invoke(app, [*base, *strict, "--", sys.executable, WEATHER])
+    assert result.exit_code == 1
+    [b] = json.loads(json_out.read_text())["bench"]
+    assert "throughput" in b["failures"][0]
+
+
+def test_inspect_table_shows_resources_and_prompts():
+    result = runner.invoke(app, ["inspect", "--", sys.executable, WEATHER])
+    assert result.exit_code == 0, result.output
+    assert "Resources (1)" in result.stdout
+    assert "Prompts (1)" in result.stdout
+    assert "no problems found" in result.stdout
