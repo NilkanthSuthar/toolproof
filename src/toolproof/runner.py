@@ -1,17 +1,23 @@
-"""Run static checks and test cases against a server and collect the results."""
+"""Run static checks, test cases, benchmarks and fuzzing against a server."""
 
 from __future__ import annotations
 
 import time
+from collections.abc import Collection
 from dataclasses import dataclass, field
+from typing import Literal
 
 import anyio
 import mcp_types as types
 
 from toolproof.assertions import check_expectations
+from toolproof.bench import BenchResult, run_bench
 from toolproof.checks import CheckResult, has_failures, run_checks
 from toolproof.client import CallResult, McpServer, ServerError
 from toolproof.config import Config, TestCase
+from toolproof.fuzz import FuzzResult, run_fuzz
+
+Phase = Literal["checks", "tests", "bench", "fuzz"]
 
 
 @dataclass
@@ -35,11 +41,15 @@ class RunReport:
     """Everything a reporter needs to print or write a run."""
 
     target: str
+    phases: list[str] = field(default_factory=list)
     server_name: str | None = None
     server_version: str | None = None
     tool_names: list[str] = field(default_factory=list)
     checks: list[CheckResult] = field(default_factory=list)
     tests: list[TestResult] = field(default_factory=list)
+    bench: list[BenchResult] = field(default_factory=list)
+    fuzz: list[FuzzResult] = field(default_factory=list)
+    fuzz_seed: int | None = None
     duration_s: float = 0.0
     strict: bool = False
     error: str | None = None
@@ -54,45 +64,65 @@ class RunReport:
 
     @property
     def passed(self) -> bool:
-        return self.error is None and not self.checks_failed and self.tests_failed == 0
+        return (
+            self.error is None
+            and not self.checks_failed
+            and self.tests_failed == 0
+            and all(b.passed for b in self.bench)
+            and all(f.passed for f in self.fuzz)
+        )
 
 
-def run_config(config: Config) -> RunReport:
+def default_phases(config: Config) -> list[Phase]:
+    """What `toolproof run` does: checks and tests, plus bench/fuzz if configured."""
+    phases: list[Phase] = ["checks", "tests"]
+    if config.bench is not None and config.bench.enabled:
+        phases.append("bench")
+    if config.fuzz is not None and config.fuzz.enabled:
+        phases.append("fuzz")
+    return phases
+
+
+def run_config(config: Config, phases: Collection[Phase] | None = None) -> RunReport:
     """Synchronous entry point used by the CLI."""
-    return anyio.run(run_config_async, config)
+    return anyio.run(run_config_async, config, phases)
 
 
-async def run_config_async(config: Config) -> RunReport:
-    """Connect to the server, run static checks, then every test case in order."""
+async def run_config_async(config: Config, phases: Collection[Phase] | None = None) -> RunReport:
+    """Connect to the server and run the requested phases in order.
+
+    Fuzzing goes last because it is the most likely to crash or wedge the server.
+    """
+    phases = default_phases(config) if phases is None else phases
     started = time.perf_counter()
-    report = RunReport(target=describe_target(config), strict=config.checks.strict)
-
-    server = McpServer(config.server, base_dir=config.base_dir)
-    try:
-        await server.connect()
-    except ServerError as exc:
-        report.error = str(exc)
-        report.duration_s = time.perf_counter() - started
-        return report
+    report = RunReport(
+        target=describe_target(config), phases=list(phases), strict=config.checks.strict
+    )
 
     try:
-        info = server.client.server_info
-        if info is not None:
-            report.server_name, report.server_version = info.name, info.version
+        async with McpServer(config.server, base_dir=config.base_dir) as server:
+            info = server.client.server_info
+            if info is not None:
+                report.server_name, report.server_version = info.name, info.version
 
-        tools = await server.list_tools()
-        report.tool_names = [tool.name for tool in tools]
-        if config.checks.enabled:
-            report.checks = run_checks(tools, config.checks)
+            tools = await server.list_tools()
+            report.tool_names = [tool.name for tool in tools]
 
-        tools_by_name = {tool.name: tool for tool in tools}
-        for case in config.tests:
-            result = await _run_test(server, case, tools_by_name, config)
-            report.tests.append(result)
+            if "checks" in phases and config.checks.enabled:
+                report.checks = run_checks(tools, config.checks)
+
+            if "tests" in phases:
+                tools_by_name = {tool.name: tool for tool in tools}
+                for case in config.tests:
+                    report.tests.append(await _run_test(server, case, tools_by_name, config))
+
+            if "bench" in phases and config.bench is not None:
+                report.bench = await run_bench(server, config.bench, config.tests)
+
+            if "fuzz" in phases and config.fuzz is not None:
+                report.fuzz, report.fuzz_seed = await run_fuzz(server, tools, config.fuzz)
     except ServerError as exc:
         report.error = str(exc)
-    finally:
-        await server.close()
 
     report.duration_s = time.perf_counter() - started
     return report
