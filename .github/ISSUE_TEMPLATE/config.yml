@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://nilkanthsuthar.github.io/toolproof/
+    about: Guides, recipes and the full reference.
+  - name: Report a security problem
+    url: https://github.com/NilkanthSuthar/toolproof/security/advisories/new
+    about: Please report security problems privately, not in a public issue.

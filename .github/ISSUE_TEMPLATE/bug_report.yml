@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in toolproof doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For security problems, use the private reporting described in SECURITY.md instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The command and the smallest toolproof.yaml that shows the problem. Remove any secrets.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The full console output, or the relevant part of the JSON report.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: toolproof version
+      description: Output of `toolproof --version`.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python version and operating system
+      placeholder: Python 3.12, Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: MCP server under test
+      description: Which server, which language, and how it's started. Optional, but helps a lot.
