@@ -7,7 +7,12 @@ Planted bugs:
   3. slow_report takes 3 seconds to answer.
   4. get_temperature declares an outputSchema with a numeric temp_c
      but returns it as a string.
-  5. lookup requires a field that isn't in its properties.
+  5. lookup's schema requires `city_id`, which isn't in its properties,
+     while the code reads `name`, so valid calls raise KeyError.
+
+`toolproof run examples/buggy.yaml` catches these with static checks and
+tests. `toolproof fuzz -c examples/buggy.yaml` finds every one of them
+without any hand-written tests.
 
 It uses the low-level server API because the high-level one generates
 correct schemas for you, which makes bugs 2, 4 and 5 hard to write.
@@ -106,7 +111,9 @@ async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolR
         )
 
     if params.name == "lookup":
-        return text("not found", is_error=True)
+        # bug 5: the code reads "name" but the schema only requires "city_id",
+        # so a perfectly valid call raises KeyError.
+        return text(f"no city called {args['name']}", is_error=True)
 
     return text(f"unknown tool: {params.name}", is_error=True)
 

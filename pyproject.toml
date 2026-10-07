@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-toolproof"
-version = "0.1.0"
+version = "0.2.0"
 description = "Automated tests for MCP servers: schema checks, YAML test cases, JUnit output and a pytest plugin."
 readme = "README.md"
 license = "MIT"
@@ -32,6 +32,8 @@ dependencies = [
     "rich>=13",
     "pyyaml>=6",
     "anyio>=4",
+    "hypothesis>=6.100",
+    "hypothesis-jsonschema>=0.23",
 ]
 
 [project.optional-dependencies]
