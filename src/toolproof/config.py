@@ -155,6 +155,46 @@ class BenchConfig(_Strict):
     targets: list[BenchTarget] = Field(default_factory=list)
 
 
+class EvalCase(_Strict):
+    """One prompt and the tool a model should pick for it."""
+
+    prompt: str
+    name: str | None = None
+    expect_tool: str | None
+    expect_args: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expect_tool_is_required(cls, data: Any) -> Any:
+        # `expect_tool: null` is meaningful (the model should call no tool),
+        # so the key must be present even when its value is null.
+        if isinstance(data, dict) and "expect_tool" not in data:
+            raise ValueError("set expect_tool (use null when no tool should be called)")
+        return data
+
+
+class EvalConfig(_Strict):
+    """Settings for `toolproof eval`: tool-selection evals against a model."""
+
+    enabled: bool = True
+    provider: Literal["anthropic", "openai", "command"] | None = None
+    model: str | None = None
+    command: list[str] | None = None  # for provider: command
+    system: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)  # extra request fields
+    min_accuracy: float = Field(default=1.0, ge=0, le=1)
+    cache: bool = True
+    cache_dir: str = ".toolproof-cache"
+    timeout_s: float = 120  # for provider: command
+    cases: list[EvalCase] = Field(default_factory=list)
+
+    # Set by `--no-cache`: ask the model again and overwrite cached answers.
+    refresh: bool = Field(default=False, exclude=True)
+    # Set by `--provider` / `--model` on the command line; they beat the environment.
+    override_provider: str | None = Field(default=None, exclude=True)
+    override_model: str | None = Field(default=None, exclude=True)
+
+
 class Config(_Strict):
     """The whole toolproof.yaml file."""
 
@@ -165,6 +205,7 @@ class Config(_Strict):
     tests: list[TestCase] = Field(default_factory=list)
     fuzz: FuzzConfig | None = None
     bench: BenchConfig | None = None
+    evals: EvalConfig | None = None
 
     # Directory of the YAML file. Relative paths in `command` and `cwd` resolve from here.
     base_dir: Path = Field(default_factory=Path.cwd, exclude=True)

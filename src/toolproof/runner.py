@@ -15,9 +15,10 @@ from toolproof.bench import BenchResult, run_bench
 from toolproof.checks import CheckResult, has_failures, run_checks
 from toolproof.client import CallResult, McpServer, ServerError
 from toolproof.config import Config, TestCase
+from toolproof.evals import EvalReport, run_evals
 from toolproof.fuzz import FuzzResult, run_fuzz
 
-Phase = Literal["checks", "tests", "bench", "fuzz"]
+Phase = Literal["checks", "tests", "evals", "bench", "fuzz"]
 
 
 @dataclass
@@ -50,6 +51,7 @@ class RunReport:
     bench: list[BenchResult] = field(default_factory=list)
     fuzz: list[FuzzResult] = field(default_factory=list)
     fuzz_seed: int | None = None
+    evals: EvalReport | None = None
     duration_s: float = 0.0
     strict: bool = False
     error: str | None = None
@@ -70,12 +72,15 @@ class RunReport:
             and self.tests_failed == 0
             and all(b.passed for b in self.bench)
             and all(f.passed for f in self.fuzz)
+            and (self.evals is None or self.evals.passed)
         )
 
 
 def default_phases(config: Config) -> list[Phase]:
-    """What `toolproof run` does: checks and tests, plus bench/fuzz if configured."""
+    """What `toolproof run` does: checks and tests, plus evals/bench/fuzz if configured."""
     phases: list[Phase] = ["checks", "tests"]
+    if config.evals is not None and config.evals.enabled:
+        phases.append("evals")
     if config.bench is not None and config.bench.enabled:
         phases.append("bench")
     if config.fuzz is not None and config.fuzz.enabled:
@@ -115,6 +120,9 @@ async def run_config_async(config: Config, phases: Collection[Phase] | None = No
                 tools_by_name = {tool.name: tool for tool in tools}
                 for case in config.tests:
                     report.tests.append(await _run_test(server, case, tools_by_name, config))
+
+            if "evals" in phases and config.evals is not None:
+                report.evals = await run_evals(tools, config.evals, config.base_dir)
 
             if "bench" in phases and config.bench is not None:
                 report.bench = await run_bench(server, config.bench, config.tests)
