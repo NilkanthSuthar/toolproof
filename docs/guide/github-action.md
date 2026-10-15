@@ -1,6 +1,6 @@
 # GitHub Action
 
-The toolproof Action installs toolproof, runs it, uploads the reports and adds a summary to the workflow run.
+The toolproof Action installs toolproof, runs it, uploads the reports and adds a summary to the workflow run. It's listed on the GitHub Marketplace as [MCP toolproof](https://github.com/marketplace/actions/mcp-toolproof).
 
 ```yaml title=".github/workflows/mcp.yml"
 name: MCP server tests

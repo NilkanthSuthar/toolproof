@@ -4,6 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/mcp-toolproof)](https://pypi.org/project/mcp-toolproof/)
 [![CI](https://github.com/NilkanthSuthar/toolproof/actions/workflows/ci.yml/badge.svg)](https://github.com/NilkanthSuthar/toolproof/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://nilkanthsuthar.github.io/toolproof/)
+[![GitHub Marketplace](https://img.shields.io/badge/marketplace-MCP%20toolproof-blue?logo=github)](https://github.com/marketplace/actions/mcp-toolproof)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/NilkanthSuthar/toolproof/blob/main/LICENSE)
 
 **Automated tests for [Model Context Protocol](https://modelcontextprotocol.io) servers.** Check tool definitions, write YAML or pytest tests, fuzz every tool from its schema, benchmark latency, check that models pick the right tools, and fail the build when something breaks.
