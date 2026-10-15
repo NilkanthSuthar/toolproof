@@ -19,7 +19,9 @@ inputs:
     description: Directory to run in.
     default: .
   python-version:
-    description: Python version to set up. Leave empty to use the runner's Python.
+    description: >-
+      Python version to set up. Set it to "" to use a Python your job already set up,
+      which you need when toolproof should run your server with its dependencies installed.
     default: "3.12"
   version:
     description: toolproof version to install, for example "0.3.0". Empty installs the latest release.

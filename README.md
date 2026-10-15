@@ -85,9 +85,14 @@ toolproof eval -c toolproof.yaml
 In GitHub Actions:
 
 ```yaml
+- uses: actions/setup-python@v7
+  with:
+    python-version: "3.12"
+- run: pip install -e .              # your server and its dependencies
 - uses: NilkanthSuthar/toolproof@v0.3.0
   with:
     config: toolproof.yaml
+    python-version: ""               # run in the environment set up above
 ```
 
 Or in Python, with the pytest plugin:
