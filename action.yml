@@ -1,0 +1,122 @@
+name: toolproof
+description: Test an MCP server in CI - static checks, YAML tests, fuzzing, benchmarks and tool-selection evals.
+author: Nilkanth Suthar
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  command:
+    description: "toolproof command to run: run, fuzz, bench or eval."
+    default: run
+  config:
+    description: Path to toolproof.yaml, relative to working-directory.
+    default: toolproof.yaml
+  args:
+    description: Extra arguments for the command, for example "--strict --skip-fuzz".
+    default: ""
+  working-directory:
+    description: Directory to run in.
+    default: .
+  python-version:
+    description: Python version to set up. Leave empty to use the runner's Python.
+    default: "3.12"
+  version:
+    description: toolproof version to install, for example "0.3.0". Empty installs the latest release.
+    default: ""
+  extras:
+    description: Optional extras to install, for example "anthropic" or "openai" for evals.
+    default: ""
+  package:
+    description: Install toolproof from this pip spec instead of PyPI (used to test the action itself).
+    default: ""
+  report-name:
+    description: Name of the uploaded report artifact.
+    default: toolproof-report
+  upload-report:
+    description: Upload the JUnit, JSON and HTML reports as an artifact.
+    default: "true"
+  job-summary:
+    description: Add a summary to the workflow run page.
+    default: "true"
+
+outputs:
+  passed:
+    description: '"true" if everything passed, otherwise "false".'
+    value: ${{ steps.run.outputs.passed }}
+  report-dir:
+    description: Directory containing report.xml, report.json and report.html.
+    value: ${{ steps.run.outputs.report-dir }}
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.python-version != ''
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install toolproof
+      shell: bash
+      env:
+        TP_VERSION: ${{ inputs.version }}
+        TP_EXTRAS: ${{ inputs.extras }}
+        TP_PACKAGE: ${{ inputs.package }}
+      run: |
+        extras=""
+        if [ -n "$TP_EXTRAS" ]; then extras="[$TP_EXTRAS]"; fi
+        if [ -n "$TP_PACKAGE" ]; then
+          spec="${TP_PACKAGE}${extras}"
+        elif [ -n "$TP_VERSION" ]; then
+          spec="mcp-toolproof${extras}==${TP_VERSION}"
+        else
+          spec="mcp-toolproof${extras}"
+        fi
+        python -m pip install --disable-pip-version-check "$spec"
+        toolproof --version
+
+    - name: Run toolproof
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TP_COMMAND: ${{ inputs.command }}
+        TP_CONFIG: ${{ inputs.config }}
+        TP_ARGS: ${{ inputs.args }}
+        TP_SUMMARY: ${{ inputs.job-summary }}
+      run: |
+        report_dir="$RUNNER_TEMP/toolproof-report"
+        mkdir -p "$report_dir"
+        echo "report-dir=$report_dir" >> "$GITHUB_OUTPUT"
+
+        case "$TP_COMMAND" in
+          run) target=("$TP_CONFIG") ;;
+          fuzz|bench|eval) target=(-c "$TP_CONFIG") ;;
+          *) echo "::error::Unknown command '$TP_COMMAND' (use run, fuzz, bench or eval)"; exit 2 ;;
+        esac
+
+        summary=()
+        if [ "$TP_SUMMARY" = "true" ]; then summary=(--summary "$GITHUB_STEP_SUMMARY"); fi
+
+        # Word-split TP_ARGS on purpose so "--strict --skip-fuzz" becomes two arguments.
+        # shellcheck disable=SC2206
+        extra=($TP_ARGS)
+
+        set +e
+        toolproof "$TP_COMMAND" "${target[@]}" \
+          --junit "$report_dir/report.xml" \
+          --json "$report_dir/report.json" \
+          --html "$report_dir/report.html" \
+          "${summary[@]}" "${extra[@]}"
+        code=$?
+        set -e
+
+        if [ "$code" = "0" ]; then echo "passed=true" >> "$GITHUB_OUTPUT"; else echo "passed=false" >> "$GITHUB_OUTPUT"; fi
+        exit "$code"
+
+    - if: always() && inputs.upload-report == 'true' && steps.run.outputs.report-dir != ''
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.report-name }}
+        path: ${{ steps.run.outputs.report-dir }}
+        if-no-files-found: ignore

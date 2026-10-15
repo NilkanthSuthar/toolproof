@@ -97,3 +97,38 @@ jobs:
           path: |
             report.xml
             report.json
+
+  action:
+    # Test the GitHub Action in this repo, installing toolproof from this checkout.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Passing run
+        id: good
+        uses: ./
+        with:
+          package: .
+          working-directory: examples
+          config: toolproof.yaml
+          report-name: action-report-${{ matrix.os }}
+      - name: Failing run (expected)
+        id: bad
+        continue-on-error: true
+        uses: ./
+        with:
+          package: .
+          command: fuzz
+          working-directory: examples
+          config: buggy.yaml
+          args: --seed 1 --max-time 20
+          upload-report: "false"
+      - name: Check outputs
+        shell: bash
+        run: |
+          test "${{ steps.good.outputs.passed }}" = "true"
+          test "${{ steps.bad.outputs.passed }}" = "false"
+          test -f "${{ steps.good.outputs.report-dir }}/report.html"
