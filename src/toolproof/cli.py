@@ -19,11 +19,12 @@ from toolproof.config import (
     BenchTarget,
     Config,
     ConfigError,
+    EvalConfig,
     FuzzConfig,
     ServerConfig,
     load_config,
 )
-from toolproof.reporters import print_report, write_json, write_junit
+from toolproof.reporters import print_report, write_json, write_junit, write_markdown
 from toolproof.runner import RunReport, default_phases, run_config
 
 app = typer.Typer(
@@ -48,6 +49,16 @@ ConfigOpt = Annotated[
 ]
 JunitOpt = Annotated[Path | None, typer.Option(help="Write a JUnit XML report to this path.")]
 JsonOpt = Annotated[Path | None, typer.Option("--json", help="Write a JSON report to this path.")]
+HtmlOpt = Annotated[
+    Path | None, typer.Option("--html", help="Write a single-file HTML report to this path.")
+]
+SummaryOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--summary",
+        help="Append a Markdown summary to this path, e.g. $GITHUB_STEP_SUMMARY.",
+    ),
+]
 
 
 def _version(value: bool) -> None:
@@ -107,6 +118,8 @@ def run(
     ] = DEFAULT_CONFIG,
     junit: JunitOpt = None,
     json_out: JsonOpt = None,
+    html: HtmlOpt = None,
+    summary: SummaryOpt = None,
     timeout_ms: Annotated[
         float | None, typer.Option(help="Default per-test timeout in milliseconds.")
     ] = None,
@@ -117,8 +130,9 @@ def run(
     checks: Annotated[bool, typer.Option(help="Run the static checks.")] = True,
     skip_bench: Annotated[bool, typer.Option(help="Skip the bench section.")] = False,
     skip_fuzz: Annotated[bool, typer.Option(help="Skip the fuzz section.")] = False,
+    skip_evals: Annotated[bool, typer.Option(help="Skip the evals section.")] = False,
 ) -> None:
-    """Run everything in CONFIG: static checks, tests, and bench/fuzz if configured.
+    """Run everything in CONFIG: static checks, tests, and evals/bench/fuzz if configured.
 
     Exits 1 if anything fails.
     """
@@ -137,7 +151,9 @@ def run(
         phases.remove("bench")
     if skip_fuzz and "fuzz" in phases:
         phases.remove("fuzz")
-    _finish(run_config(config, phases), junit, json_out)
+    if skip_evals and "evals" in phases:
+        phases.remove("evals")
+    _finish(run_config(config, phases), junit, json_out, html, summary)
 
 
 @app.command()
@@ -162,6 +178,8 @@ def fuzz(
     ] = False,
     junit: JunitOpt = None,
     json_out: JsonOpt = None,
+    html: HtmlOpt = None,
+    summary: SummaryOpt = None,
 ) -> None:
     """Call every tool with generated inputs and report crashes, hangs and bad errors.
 
@@ -188,7 +206,7 @@ def fuzz(
     if valid_must_succeed:
         fz.valid_must_succeed = True
     config.fuzz = fz
-    _finish(run_config(config, ["fuzz"]), junit, json_out)
+    _finish(run_config(config, ["fuzz"]), junit, json_out, html, summary)
 
 
 @app.command()
@@ -212,6 +230,8 @@ def bench(
     ] = None,
     junit: JunitOpt = None,
     json_out: JsonOpt = None,
+    html: HtmlOpt = None,
+    summary: SummaryOpt = None,
 ) -> None:
     """Measure latency (p50/p95/p99), throughput and error rate.
 
@@ -255,10 +275,59 @@ def bench(
         )
         raise typer.Exit(2)
     config.bench = bc
-    _finish(run_config(config, ["bench"]), junit, json_out)
+    _finish(run_config(config, ["bench"]), junit, json_out, html, summary)
 
 
-def _finish(report: RunReport, junit: Path | None, json_out: Path | None) -> None:
+@app.command("eval")
+def eval_(
+    command: CommandArg = None,
+    url: UrlOpt = None,
+    config_path: ConfigOpt = None,
+    provider: Annotated[
+        str | None, typer.Option(help="anthropic, openai or command. Overrides the config.")
+    ] = None,
+    model: Annotated[str | None, typer.Option(help="Model name. Overrides the config.")] = None,
+    min_accuracy: Annotated[
+        float | None, typer.Option(help="Fail below this share of correct picks (0 to 1).")
+    ] = None,
+    no_cache: Annotated[
+        bool, typer.Option("--no-cache", help="Ask the model again and refresh the cache.")
+    ] = False,
+    junit: JunitOpt = None,
+    json_out: JsonOpt = None,
+    html: HtmlOpt = None,
+    summary: SummaryOpt = None,
+) -> None:
+    """Check that a model picks the right tool for each prompt in the config's evals.
+
+    Examples:
+
+        toolproof eval -c toolproof.yaml
+
+        toolproof eval -c toolproof.yaml --provider openai --model gpt-5.5 --no-cache
+    """
+    config = _config_from_args(command, url, config_path)
+    ev = config.evals or EvalConfig()
+    if not ev.cases:
+        err_console.print("[red]No eval cases. Add an evals: section with cases.[/red]")
+        raise typer.Exit(2)
+    ev.override_provider = provider
+    ev.override_model = model
+    if min_accuracy is not None:
+        ev.min_accuracy = min_accuracy
+    if no_cache:
+        ev.refresh = True
+    config.evals = ev
+    _finish(run_config(config, ["evals"]), junit, json_out, html, summary)
+
+
+def _finish(
+    report: RunReport,
+    junit: Path | None,
+    json_out: Path | None,
+    html: Path | None = None,
+    summary: Path | None = None,
+) -> None:
     """Print the report, write report files and exit with the right code."""
     print_report(report, console)
     if junit:
@@ -267,6 +336,13 @@ def _finish(report: RunReport, junit: Path | None, json_out: Path | None) -> Non
     if json_out:
         write_json(report, json_out)
         console.print(f"JSON report written to {json_out}")
+    if html:
+        from toolproof.html_report import write_html
+
+        write_html(report, html)
+        console.print(f"HTML report written to {html}")
+    if summary:
+        write_markdown(report, summary)
     raise typer.Exit(0 if report.passed else 1)
 
 

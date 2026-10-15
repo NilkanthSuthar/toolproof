@@ -62,6 +62,8 @@ def print_report(report: RunReport, console: Console | None = None) -> None:
                 console.print(test.server_stderr, markup=False, highlight=False)
                 console.print()
 
+    if report.evals is not None:
+        _print_evals(report, console)
     if report.bench:
         _print_bench(report, console)
     if report.fuzz:
@@ -71,6 +73,34 @@ def print_report(report: RunReport, console: Console | None = None) -> None:
         console.print(f"[red bold]Error:[/red bold] {report.error}", markup=True)
 
     console.print(_summary_line(report))
+
+
+def _print_evals(report: RunReport, console: Console) -> None:
+    ev = report.evals
+    assert ev is not None
+    who = " / ".join(x for x in (ev.provider, ev.model) if x)
+    title = f"Tool-selection evals ({who})" if who else "Tool-selection evals"
+    table = Table(title=title, title_justify="left")
+    table.add_column("", width=4)
+    table.add_column("Case")
+    table.add_column("Expected")
+    table.add_column("Picked")
+    table.add_column("Details")
+    for c in ev.cases:
+        mark = Text("PASS", style="green") if c.passed else Text("MISS", style="red")
+        picked = c.picked_tool or "(no tool)"
+        if c.picked_args:
+            picked += " " + _short_json(c.picked_args, 50)
+        details = "\n".join(c.failures)
+        if c.cached:
+            details = (details + "\n(cached)").strip()
+        table.add_row(mark, c.name, c.expect_tool or "(no tool)", picked, details)
+    console.print(table)
+    if ev.cases:
+        console.print(
+            f"Accuracy {ev.accuracy:.0%} ({ev.correct}/{len(ev.cases)}), "
+            f"minimum {ev.min_accuracy:.0%}\n"
+        )
 
 
 def _print_bench(report: RunReport, console: Console) -> None:
@@ -146,6 +176,9 @@ def _summary_line(report: RunReport) -> str:
     if "checks" in report.phases:
         errors = sum(1 for c in report.checks if c.severity == "error")
         parts.append(f"checks: {errors} errors, {len(report.checks) - errors} warnings")
+    if "evals" in report.phases and report.evals is not None:
+        ev = report.evals
+        parts.append(f"evals: {ev.accuracy:.0%} accuracy ({ev.correct}/{len(ev.cases)})")
     if "bench" in report.phases:
         failed = sum(1 for b in report.bench if not b.passed)
         parts.append(f"bench: {len(report.bench) - failed} passed, {failed} failed")
@@ -171,6 +204,8 @@ def write_junit(report: RunReport, path: str | Path) -> None:
         _junit_checks(root, report)
     if "tests" in report.phases or report.error:
         _junit_tests(root, report)
+    if "evals" in report.phases and report.evals is not None:
+        _junit_evals(root, report)
     if "bench" in report.phases:
         _junit_bench(root, report)
     if "fuzz" in report.phases:
@@ -221,6 +256,33 @@ def _junit_tests(root: ET.Element, report: RunReport) -> None:
         errors=1 if report.error else 0,
         time_s=sum(t.latency_ms for t in report.tests) / 1000,
     )
+
+
+def _junit_evals(root: ET.Element, report: RunReport) -> None:
+    """One case for the accuracy threshold, then one per eval case.
+
+    A single wrong pick isn't a failure on its own: `min_accuracy` decides
+    whether the run fails, so misses are listed in <system-out> instead.
+    """
+    ev = report.evals
+    assert ev is not None
+    suite = ET.SubElement(root, "testsuite", name="evals")
+    accuracy = ET.SubElement(suite, "testcase", classname="toolproof.evals", name="accuracy")
+    ET.SubElement(accuracy, "system-out").text = (
+        f"provider={ev.provider} model={ev.model} accuracy={ev.accuracy:.2%} "
+        f"({ev.correct}/{len(ev.cases)}) minimum={ev.min_accuracy:.2%}"
+    )
+    if not ev.passed:
+        message = ev.error or f"accuracy {ev.accuracy:.0%} is below {ev.min_accuracy:.0%}"
+        ET.SubElement(accuracy, "failure", message=message).text = message
+    for c in ev.cases:
+        case = ET.SubElement(suite, "testcase", classname="toolproof.evals", name=c.name)
+        picked = c.picked_tool or "no tool"
+        status = "correct" if c.passed else "MISS: " + "; ".join(c.failures)
+        ET.SubElement(
+            case, "system-out"
+        ).text = f"prompt: {c.prompt}\npicked: {picked} {_short_json(c.picked_args, 300)}\n{status}"
+    _set_counts(suite, total=len(ev.cases) + 1, failures=0 if ev.passed else 1, time_s=0.0)
 
 
 def _junit_bench(root: ET.Element, report: RunReport) -> None:
@@ -364,6 +426,7 @@ def report_to_dict(report: RunReport) -> dict[str, Any]:
                 for f in report.fuzz
             ],
         },
+        "evals": _evals_to_dict(report),
         "summary": {
             "phases": report.phases,
             "tests": len(report.tests),
@@ -372,9 +435,115 @@ def report_to_dict(report: RunReport) -> dict[str, Any]:
             "check_warnings": sum(1 for c in report.checks if c.severity == "warning"),
             "bench_failed": sum(1 for b in report.bench if not b.passed),
             "fuzz_findings": sum(len(f.findings) for f in report.fuzz),
+            "eval_accuracy": round(report.evals.accuracy, 4) if report.evals else None,
         },
+    }
+
+
+def _evals_to_dict(report: RunReport) -> dict[str, Any] | None:
+    ev = report.evals
+    if ev is None:
+        return None
+    return {
+        "provider": ev.provider,
+        "model": ev.model,
+        "passed": ev.passed,
+        "accuracy": round(ev.accuracy, 4),
+        "correct": ev.correct,
+        "min_accuracy": ev.min_accuracy,
+        "error": ev.error,
+        "cases": [
+            {
+                "name": c.name,
+                "prompt": c.prompt,
+                "passed": c.passed,
+                "expect_tool": c.expect_tool,
+                "expect_args": c.expect_args,
+                "picked_tool": c.picked_tool,
+                "picked_args": c.picked_args,
+                "failures": c.failures,
+                "cached": c.cached,
+            }
+            for c in ev.cases
+        ],
     }
 
 
 def write_json(report: RunReport, path: str | Path) -> None:
     Path(path).write_text(json.dumps(report_to_dict(report), indent=2), encoding="utf-8")
+
+
+# ---------- Markdown summary ----------
+
+
+def render_markdown(report: RunReport) -> str:
+    """A short Markdown summary, for GitHub's job summary or a PR comment."""
+
+    def cell(value: Any) -> str:
+        # Keep cells on one line, and stop text from the server breaking the table.
+        return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+    status = "Passed" if report.passed else "Failed"
+    icon = "✅" if report.passed else "❌"
+    name = report.server_name or report.target
+    lines = [
+        f"## {icon} toolproof: {status}",
+        "",
+        f"`{cell(name)}` in {report.duration_s:.1f}s",
+        "",
+    ]
+    if report.error:
+        lines += [f"**Error:** {cell(report.error)}", ""]
+
+    rows: list[tuple[str, str, bool]] = []
+    if "checks" in report.phases:
+        errors = sum(1 for c in report.checks if c.severity == "error")
+        warnings = len(report.checks) - errors
+        rows.append(
+            ("Static checks", f"{errors} errors, {warnings} warnings", not report.checks_failed)
+        )
+    if "tests" in report.phases:
+        passed = len(report.tests) - report.tests_failed
+        rows.append(("Tests", f"{passed}/{len(report.tests)} passed", report.tests_failed == 0))
+    if "evals" in report.phases and report.evals is not None:
+        ev = report.evals
+        detail = ev.error or f"{ev.accuracy:.0%} accuracy, minimum {ev.min_accuracy:.0%}"
+        rows.append(("Evals", detail, ev.passed))
+    if "bench" in report.phases:
+        failed = sum(1 for b in report.bench if not b.passed)
+        within = f"{len(report.bench) - failed}/{len(report.bench)} within limits"
+        rows.append(("Bench", within, failed == 0))
+    if "fuzz" in report.phases:
+        findings = sum(len(f.findings) for f in report.fuzz)
+        rows.append(("Fuzz", f"{findings} findings (seed {report.fuzz_seed})", findings == 0))
+    if rows:
+        lines += ["| | Phase | Result |", "|---|---|---|"]
+        lines += [f"| {'✅' if ok else '❌'} | {p} | {cell(r)} |" for p, r, ok in rows]
+        lines.append("")
+
+    problems = [
+        f"- **{cell(t.name)}**: {cell(t.failures[0])}" for t in report.tests if not t.passed
+    ]
+    problems += [
+        f"- **fuzz {cell(f.tool)}**: {cell(x.kind)} with `{cell(_short_json(x.input, 80))}`"
+        for f in report.fuzz
+        for x in f.findings
+    ]
+    problems += [
+        f"- **bench {cell(b.name)}**: {cell(b.failures[0])}" for b in report.bench if not b.passed
+    ]
+    if report.evals is not None:
+        problems += [
+            f"- **eval {cell(c.name)}**: {cell(c.failures[0])}"
+            for c in report.evals.cases
+            if not c.passed
+        ]
+    if problems:
+        lines += ["<details><summary>Failures</summary>", "", *problems[:50], "", "</details>", ""]
+    return "\n".join(lines)
+
+
+def write_markdown(report: RunReport, path: str | Path) -> None:
+    """Write the Markdown summary. Appends, so it works with $GITHUB_STEP_SUMMARY."""
+    with Path(path).open("a", encoding="utf-8") as f:
+        f.write(render_markdown(report) + "\n")
