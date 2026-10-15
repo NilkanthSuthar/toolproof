@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 import yaml
 from typer.testing import CliRunner
 
-from tests.conftest import BUGGY, WEATHER
+from tests.conftest import BUGGY, EXAMPLES, WEATHER
 from toolproof.cli import app
 
 runner = CliRunner()
@@ -308,3 +308,68 @@ def test_inspect_table_shows_resources_and_prompts():
     assert "Resources (1)" in result.stdout
     assert "Prompts (1)" in result.stdout
     assert "no problems found" in result.stdout
+
+
+def write_eval_yaml(path, min_accuracy=1.0):
+    picker = str(EXAMPLES / "keyword_picker.py")
+    data = {
+        "server": {"command": [sys.executable, WEATHER]},
+        "evals": {
+            "provider": "command",
+            "command": [sys.executable, picker],
+            "min_accuracy": min_accuracy,
+            "cases": [
+                {"prompt": "Rain in Toronto?", "expect_tool": "get_weather"},
+                {"prompt": "Weather please", "expect_tool": "get_weather"},
+            ],
+        },
+    }
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
+def test_eval_command(tmp_path):
+    config = write_eval_yaml(tmp_path / "toolproof.yaml", min_accuracy=0.5)
+    json_out = tmp_path / "eval.json"
+    result = runner.invoke(app, ["eval", "-c", str(config), "--json", str(json_out)])
+    assert result.exit_code == 0, result.output
+    data = json.loads(json_out.read_text())["evals"]
+    assert data["accuracy"] == 0.5 and data["passed"] is True
+
+    result = runner.invoke(app, ["eval", "-c", str(config), "--min-accuracy", "1"])
+    assert result.exit_code == 1
+
+
+def test_eval_needs_cases(tmp_path):
+    config = write_yaml(tmp_path / "toolproof.yaml", WEATHER, [])
+    result = runner.invoke(app, ["eval", "-c", str(config)])
+    assert result.exit_code == 2
+    assert "No eval cases" in result.output
+
+
+def test_eval_provider_flag_overrides_config(tmp_path):
+    config = write_eval_yaml(tmp_path / "toolproof.yaml")
+    json_out = tmp_path / "eval.json"
+    # The openai provider has no model configured, so overriding to it fails clearly.
+    args = ["eval", "-c", str(config), "--provider", "openai", "--json", str(json_out)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "no eval model" in json.loads(json_out.read_text())["evals"]["error"]
+
+
+def test_html_and_summary_outputs(tmp_path):
+    config = write_yaml(
+        tmp_path / "toolproof.yaml",
+        WEATHER,
+        [{"name": "toronto", "tool": "get_weather", "args": {"city": "Toronto"}}],
+    )
+    html = tmp_path / "report.html"
+    summary = tmp_path / "summary.md"
+    summary.write_text("existing\n")
+    args = ["run", str(config), "--html", str(html), "--summary", str(summary)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert "toronto" in html.read_text(encoding="utf-8")
+    text = summary.read_text(encoding="utf-8")
+    assert text.startswith("existing\n")  # appended, like $GITHUB_STEP_SUMMARY needs
+    assert "toolproof: Passed" in text
