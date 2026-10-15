@@ -4,6 +4,16 @@ All notable changes to toolproof are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-15
+
+### Changed
+
+- The GitHub Action is named "MCP toolproof", so it can be listed on the GitHub Marketplace. Workflows still use `uses: NilkanthSuthar/toolproof@...`.
+
+### Fixed
+
+- `refresh`, `override_provider` and `override_model` were accepted as keys in the `evals:` section of toolproof.yaml. They are command-line options only (`--no-cache`, `--provider`, `--model`) and are now rejected like any unknown key.
+
 ## [0.3.0] - 2026-10-15
 
 ### Added
@@ -49,7 +59,8 @@ First release.
 - stdio and streamable HTTP transports.
 - Example weather server and a buggy server with planted bugs.
 
-[Unreleased]: https://github.com/NilkanthSuthar/toolproof/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/NilkanthSuthar/toolproof/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/NilkanthSuthar/toolproof/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/NilkanthSuthar/toolproof/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NilkanthSuthar/toolproof/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NilkanthSuthar/toolproof/releases/tag/v0.1.0

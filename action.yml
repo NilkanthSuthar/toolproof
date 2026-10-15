@@ -1,4 +1,4 @@
-name: toolproof
+name: MCP toolproof
 description: Test an MCP server in CI - static checks, YAML tests, fuzzing, benchmarks and tool-selection evals.
 author: Nilkanth Suthar
 branding:

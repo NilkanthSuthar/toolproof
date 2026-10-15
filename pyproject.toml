@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-toolproof"
-version = "0.3.0"
+version = "0.3.1"
 description = "Automated tests for MCP servers: schema checks, YAML tests, fuzzing, benchmarks, tool-selection evals and a pytest plugin."
 readme = "README.md"
 license = "MIT"

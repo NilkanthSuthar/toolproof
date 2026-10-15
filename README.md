@@ -89,7 +89,7 @@ In GitHub Actions:
   with:
     python-version: "3.12"
 - run: pip install -e .              # your server and its dependencies
-- uses: NilkanthSuthar/toolproof@v0.3.0
+- uses: NilkanthSuthar/toolproof@v0.3.1
   with:
     config: toolproof.yaml
     python-version: ""               # run in the environment set up above

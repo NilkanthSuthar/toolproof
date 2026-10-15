@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .      # your server and its dependencies
 
-      - uses: NilkanthSuthar/toolproof@v0.3.0
+      - uses: NilkanthSuthar/toolproof@v0.3.1
         with:
           config: toolproof.yaml
           python-version: ""       # use the Python set up above
@@ -40,7 +40,7 @@ The run page then shows a summary like this, and the reports are attached as the
 | `args` | | Extra arguments, for example `--strict --skip-fuzz` or `--examples 200`. |
 | `working-directory` | `.` | Where to run. |
 | `python-version` | `3.12` | Python to set up. Set it to `""` to use one your job already set up, which you need when toolproof should run in the same environment as your server. |
-| `version` | latest | toolproof version to install, for example `0.3.0`. Pin it for reproducible builds. |
+| `version` | latest | toolproof version to install, for example `0.3.1`. Pin it for reproducible builds. |
 | `extras` | | Optional extras, for example `anthropic` or `openai` for evals. |
 | `report-name` | `toolproof-report` | Name of the uploaded artifact. |
 | `upload-report` | `true` | Upload `report.xml`, `report.json` and `report.html`. |
@@ -60,7 +60,7 @@ The step fails when toolproof fails, like any test step. To keep going and decid
 **Evals with a secret key:**
 
 ```yaml
-      - uses: NilkanthSuthar/toolproof@v0.3.0
+      - uses: NilkanthSuthar/toolproof@v0.3.1
         with:
           command: eval
           extras: anthropic
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: NilkanthSuthar/toolproof@v0.3.0
+      - uses: NilkanthSuthar/toolproof@v0.3.1
         with:
           command: fuzz
           args: --examples 500 --max-time 300
@@ -92,9 +92,9 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci && npm run build
-      - uses: NilkanthSuthar/toolproof@v0.3.0
+      - uses: NilkanthSuthar/toolproof@v0.3.1
 ```
 
 ## Versions
 
-Reference a release tag such as `@v0.3.0`. Tags never move, so a pinned workflow keeps working the same way. The `version` input pins the toolproof package separately; leave it empty to get the latest release with a given Action version.
+Reference a release tag such as `@v0.3.1`. Tags never move, so a pinned workflow keeps working the same way. The `version` input pins the toolproof package separately; leave it empty to get the latest release with a given Action version.
