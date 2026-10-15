@@ -109,7 +109,7 @@ def test_provider_precedence(monkeypatch):
     config = EvalConfig(provider="openai", model="from-yaml", cases=[])
     monkeypatch.setenv("TOOLPROOF_EVAL_MODEL", "from-env")
     assert evals.resolve_provider_and_model(config) == ("openai", "from-env")
-    config.override_model = "from-flag"
+    config.set_cli_options(model="from-flag")
     assert evals.resolve_provider_and_model(config) == ("openai", "from-flag")
 
 
@@ -276,7 +276,7 @@ def test_api_answers_are_cached(write_config, monkeypatch):
     second = run_config(config, ["evals"]).evals
     assert len(asked) == 1 and second.cases[0].cached and second.passed
 
-    config.evals.refresh = True  # --no-cache
+    config.evals.set_cli_options(refresh=True)  # --no-cache
     run_config(config, ["evals"])
     assert len(asked) == 2
 

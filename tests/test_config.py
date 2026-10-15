@@ -74,3 +74,14 @@ def test_missing_env_var_is_a_clear_error(tmp_path, monkeypatch):
 def test_headers_need_a_url():
     with pytest.raises(ValueError, match="headers"):
         ServerConfig(command=["python", "s.py"], headers={"A": "b"})
+
+
+@pytest.mark.parametrize("key", ["refresh", "override_provider", "override_model"])
+def test_command_line_only_eval_options_are_not_yaml_keys(tmp_path, key):
+    path = tmp_path / "toolproof.yaml"
+    path.write_text(
+        "server: { url: http://localhost/mcp }\n"
+        f"evals: {{ provider: openai, model: m, {key}: x, cases: [] }}\n"
+    )
+    with pytest.raises(ConfigError, match=key):
+        load_config(path)

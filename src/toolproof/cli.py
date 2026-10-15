@@ -311,12 +311,9 @@ def eval_(
     if not ev.cases:
         err_console.print("[red]No eval cases. Add an evals: section with cases.[/red]")
         raise typer.Exit(2)
-    ev.override_provider = provider
-    ev.override_model = model
+    ev.set_cli_options(provider=provider, model=model, refresh=no_cache)
     if min_accuracy is not None:
         ev.min_accuracy = min_accuracy
-    if no_cache:
-        ev.refresh = True
     config.evals = ev
     _finish(run_config(config, ["evals"]), junit, json_out, html, summary)
 

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
 JsonType = Literal["string", "number", "integer", "boolean", "array", "object", "null"]
 
@@ -188,11 +188,31 @@ class EvalConfig(_Strict):
     timeout_s: float = 120  # for provider: command
     cases: list[EvalCase] = Field(default_factory=list)
 
-    # Set by `--no-cache`: ask the model again and overwrite cached answers.
-    refresh: bool = Field(default=False, exclude=True)
-    # Set by `--provider` / `--model` on the command line; they beat the environment.
-    override_provider: str | None = Field(default=None, exclude=True)
-    override_model: str | None = Field(default=None, exclude=True)
+    # Command-line options. Private, so they can't be set from YAML.
+    _override_provider: str | None = PrivateAttr(default=None)
+    _override_model: str | None = PrivateAttr(default=None)
+    _refresh: bool = PrivateAttr(default=False)
+
+    def set_cli_options(
+        self, provider: str | None = None, model: str | None = None, refresh: bool = False
+    ) -> None:
+        """Apply `--provider`, `--model` and `--no-cache`. Flags beat the environment."""
+        self._override_provider = provider
+        self._override_model = model
+        self._refresh = refresh
+
+    @property
+    def override_provider(self) -> str | None:
+        return self._override_provider
+
+    @property
+    def override_model(self) -> str | None:
+        return self._override_model
+
+    @property
+    def refresh(self) -> bool:
+        """Ask the model again and overwrite cached answers (`--no-cache`)."""
+        return self._refresh
 
 
 class Config(_Strict):
