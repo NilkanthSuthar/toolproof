@@ -6,7 +6,7 @@
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://nilkanthsuthar.github.io/toolproof/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/NilkanthSuthar/toolproof/blob/main/LICENSE)
 
-**Automated tests for [Model Context Protocol](https://modelcontextprotocol.io) servers.** Check tool definitions, write YAML or pytest tests, fuzz every tool from its schema, benchmark latency, and fail the build when something breaks.
+**Automated tests for [Model Context Protocol](https://modelcontextprotocol.io) servers.** Check tool definitions, write YAML or pytest tests, fuzz every tool from its schema, benchmark latency, check that models pick the right tools, and fail the build when something breaks.
 
 ```bash
 pip install mcp-toolproof
@@ -21,8 +21,9 @@ toolproof fuzz -- python my_server.py
 - **YAML tests**: assert on errors, text, regex, JSONPath values, latency and the tool's own `outputSchema`
 - **Fuzzing**: valid and invalid inputs generated from each tool's schema with Hypothesis; crashes, hangs, internal errors and leaked tracebacks, each shrunk to the smallest failing input
 - **Benchmarks**: p50/p95/p99 latency, throughput and error rate under concurrency, with thresholds
+- **Tool-selection evals**: give a model your tool list and check it picks the right tool and arguments for real requests; Anthropic, OpenAI-compatible or your own program, with cached answers
 - **pytest plugin**: an `mcp_server` fixture for tests written in Python
-- **Built for CI**: exit codes, JUnit XML and JSON reports, a fixed seed for repeatable fuzz runs, `${VAR}` secrets
+- **Built for CI**: a [GitHub Action](https://nilkanthsuthar.github.io/toolproof/guide/github-action/), exit codes, JUnit, JSON and single-file HTML reports, a job summary, repeatable fuzz seeds, `${VAR}` secrets
 - **Any server**: stdio or streamable HTTP, written in Python, TypeScript, Go or anything else; crashed servers are restarted and their stderr is shown
 
 ## Quick start
@@ -63,6 +64,30 @@ fuzz:
 
 ```bash
 toolproof run toolproof.yaml --junit report.xml
+```
+
+Check that a model picks the right tool (`pip install "mcp-toolproof[anthropic]"` or `[openai]`):
+
+```yaml
+evals:
+  provider: anthropic
+  model: your-model-name
+  cases:
+    - prompt: Is it raining in Montreal right now?
+      expect_tool: get_weather
+      expect_args: { city: Montreal }
+```
+
+```bash
+toolproof eval -c toolproof.yaml
+```
+
+In GitHub Actions:
+
+```yaml
+- uses: NilkanthSuthar/toolproof@v0.3.0
+  with:
+    config: toolproof.yaml
 ```
 
 Or in Python, with the pytest plugin:
@@ -114,7 +139,7 @@ toolproof is run against the official [MCP reference servers](https://github.com
 
 ## How it compares
 
-[MCP Inspector](https://github.com/modelcontextprotocol/inspector) is for exploring a server by hand; toolproof is for tests that run unattended in CI. Other projects cover declarative YAML tests, snapshot regression gates, agent evaluations and security scanning. toolproof's focus is behaviour testing with schema-driven fuzzing and benchmarks, offline and without an LLM. See the [comparison](https://nilkanthsuthar.github.io/toolproof/about/comparison/) for details.
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector) is for exploring a server by hand; toolproof is for tests that run unattended in CI. Other projects cover declarative YAML tests, snapshot regression gates, agent evaluations and security scanning. toolproof's focus is behaviour testing with schema-driven fuzzing and benchmarks, offline and without an LLM; only the optional evals use a model. See the [comparison](https://nilkanthsuthar.github.io/toolproof/about/comparison/) for details.
 
 ## Requirements
 

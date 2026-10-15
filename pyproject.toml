@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-toolproof"
-version = "0.2.0"
-description = "Automated tests for MCP servers: schema checks, YAML test cases, fuzzing, benchmarks, JUnit output and a pytest plugin."
+version = "0.3.0"
+description = "Automated tests for MCP servers: schema checks, YAML tests, fuzzing, benchmarks, tool-selection evals and a pytest plugin."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -14,6 +14,7 @@ maintainers = [{ name = "Nilkanth Suthar" }]
 requires-python = ">=3.11"
 keywords = [
     "mcp",
+    "evals",
     "model-context-protocol",
     "testing",
     "pytest",
@@ -65,8 +66,14 @@ dev = [
     "build>=1.2",
     "twine>=5",
     "pre-commit>=3.7",
+    # Eval provider adapters are tested against fake clients, but need the SDKs importable.
+    "anthropic>=1.0",
+    "openai>=1.40",
 ]
 docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5"]
+# Model providers for `toolproof eval`. The base install never needs them.
+anthropic = ["anthropic>=1.0"]
+openai = ["openai>=1.40"]
 
 [project.urls]
 Homepage = "https://github.com/NilkanthSuthar/toolproof"
@@ -90,6 +97,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# HTML and CSS templates read better unwrapped.
+"src/toolproof/html_report.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.11"

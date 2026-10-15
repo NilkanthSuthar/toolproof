@@ -17,3 +17,6 @@ out.json
 
 # docs build output
 site/
+
+# eval response cache (commit it if you want CI to reuse answers)
+.toolproof-cache/

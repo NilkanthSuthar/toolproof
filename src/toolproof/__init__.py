@@ -14,7 +14,7 @@ from toolproof.config import Config, ConfigError, ServerConfig, load_config
 if TYPE_CHECKING:
     from toolproof.runner import RunReport, run_config, run_config_async
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "CallResult",

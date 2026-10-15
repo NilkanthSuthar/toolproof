@@ -64,3 +64,22 @@ bench:
 fuzz:
   max_examples: 30
   seed: 1
+
+# Does a model pick the right tool for a request? This example uses a small
+# keyword script as the "model" so it runs offline. Point provider at
+# anthropic or openai (and set model) to evaluate a real one.
+evals:
+  provider: command
+  command: ["python", "keyword_picker.py"]
+  min_accuracy: 0.9
+  cases:
+    - prompt: Is it raining in Montreal right now?
+      expect_tool: get_weather
+      expect_args: { city: Montreal }
+    - prompt: What's the 5 day forecast for Calgary?
+      expect_tool: get_forecast
+      expect_args: { city: Calgary, days: 5 }
+    - prompt: Which cities do you have weather for?
+      expect_tool: list_cities
+    - prompt: Tell me a joke.
+      expect_tool: null

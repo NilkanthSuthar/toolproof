@@ -4,8 +4,15 @@ All notable changes to toolproof are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+
 ### Added
 
+- `toolproof eval`: tool-selection evals. Each case gives a model the server's tool list and a prompt, and checks the tool and arguments it picks. Providers: `anthropic`, `openai` (and compatible APIs through `OPENAI_BASE_URL`) and `command` for your own program. Accuracy is gated by `min_accuracy`, API answers are cached in `.toolproof-cache/`, and `--no-cache` refreshes them. The provider SDKs are optional extras: `mcp-toolproof[anthropic]`, `mcp-toolproof[openai]`.
+- `evals:` section in toolproof.yaml; `toolproof run` includes it when present (`--skip-evals`).
+- A GitHub Action: `uses: NilkanthSuthar/toolproof@v0.3.0` installs toolproof, runs it, uploads the reports and writes a job summary.
+- `--html PATH` writes a single-file HTML report that works offline, with a latency chart. Everything from the server under test is escaped.
+- `--summary PATH` appends a Markdown summary, for example to `$GITHUB_STEP_SUMMARY`.
 - `headers:` for HTTP servers, sent with every request (for example `Authorization`).
 - `${NAME}` in the `server:` section of toolproof.yaml is replaced with the environment variable `NAME`, so secrets can come from CI instead of the file. An unset variable is a clear error.
 - `run_config`, `run_config_async`, `RunReport` and `ConfigError` are exported from `toolproof` as public API.
@@ -42,6 +49,7 @@ First release.
 - stdio and streamable HTTP transports.
 - Example weather server and a buggy server with planted bugs.
 
-[Unreleased]: https://github.com/NilkanthSuthar/toolproof/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/NilkanthSuthar/toolproof/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/NilkanthSuthar/toolproof/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NilkanthSuthar/toolproof/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/NilkanthSuthar/toolproof/releases/tag/v0.1.0
