@@ -314,3 +314,48 @@ def test_missing_api_key_stops_the_run(write_config, monkeypatch):
     report = run_config(config, ["evals"])
     assert report.evals.error == "anthropic: no API key"
     assert not report.passed
+
+
+def sdk_error(cls, message):
+    """An SDK exception without a real HTTP response behind it."""
+    exc = cls.__new__(cls)
+    Exception.__init__(exc, message)
+    return exc
+
+
+@pytest.mark.parametrize(
+    ("module", "client", "error", "ask"),
+    [
+        (anthropic, "Anthropic", anthropic.BadRequestError, evals._ask_anthropic),
+        (openai, "OpenAI", openai.BadRequestError, evals._ask_openai),
+        (openai, "OpenAI", openai.UnprocessableEntityError, evals._ask_openai),
+    ],
+)
+def test_rejected_requests_stop_the_run(monkeypatch, module, client, error, ask):
+    def raise_error(**kwargs):
+        raise sdk_error(error, "invalid params")
+
+    fake = SimpleNamespace(
+        messages=SimpleNamespace(create=raise_error),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=raise_error)),
+    )
+    monkeypatch.setattr(module, client, lambda: fake)
+    with pytest.raises(EvalError, match="rejected the request: invalid params"):
+        ask("m", None, "p", [], {})
+
+
+def test_tools_with_invalid_schemas_are_left_out(write_config):
+    from tests.conftest import BUGGY
+
+    config = write_config(
+        BUGGY,
+        [],
+        evals={
+            "provider": "command",
+            "command": [sys.executable, PICKER],
+            "cases": [{"prompt": "Weather in Toronto", "expect_tool": "get_weather"}],
+        },
+    )
+    ev = run_config(config, ["evals"]).evals
+    assert ev.skipped_tools == ["search_cities"]
+    assert ev.passed

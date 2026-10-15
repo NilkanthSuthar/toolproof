@@ -97,7 +97,9 @@ A case is **correct** when:
 2. every key in `expect_args` matches. Keys you don't list aren't checked. Strings are compared ignoring case and surrounding spaces, numbers by value, objects key by key, and
 3. the arguments are valid against the tool's input schema.
 
-**Accuracy** is the share of correct cases. The run fails when accuracy is below `min_accuracy` (default `1.0`, every case must pass), or when the provider can't be used at all, for example because of a missing API key or an unknown model. A temporary error on one case, like a rate limit after retries, counts as a miss for that case and the run carries on.
+**Accuracy** is the share of correct cases. The run fails when accuracy is below `min_accuracy` (default `1.0`, every case must pass), or when the provider can't be used at all: a missing API key, an unknown model, or a request the API rejects, such as an invalid `params` value. A temporary error on one case, like a rate limit after retries, counts as a miss for that case and the run carries on.
+
+Tools whose input schema isn't valid JSON Schema are left out of the list sent to the model, because the API would reject every request otherwise. The report names them, and the static checks report the broken schema.
 
 A single wrong pick doesn't fail the run on its own. That's deliberate: models are not perfectly consistent, and `min_accuracy` is where you decide how much to tolerate.
 

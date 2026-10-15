@@ -31,6 +31,7 @@ import anyio
 import anyio.to_thread
 import mcp_types as types
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 from toolproof.config import EvalCase, EvalConfig
 
@@ -82,6 +83,7 @@ class EvalReport:
     min_accuracy: float
     cases: list[EvalCaseResult] = field(default_factory=list)
     error: str | None = None
+    skipped_tools: list[str] = field(default_factory=list)  # left out: invalid input schema
 
     @property
     def correct(self) -> int:
@@ -145,6 +147,10 @@ def _ask_anthropic(
         raise EvalError(f"anthropic: {exc}") from exc
     except anthropic.NotFoundError as exc:
         raise EvalError(f"anthropic: unknown model {model!r}: {exc}") from exc
+    except anthropic.BadRequestError as exc:
+        # The request itself is wrong (a bad `params` value, a schema the API
+        # won't accept), so every case would fail the same way.
+        raise EvalError(f"anthropic rejected the request: {exc}") from exc
 
     if response.stop_reason == "refusal":
         return Choice(tool=None, text="(the model declined to answer)")
@@ -193,6 +199,9 @@ def _ask_openai(
         raise EvalError(f"openai: {exc}") from exc
     except openai.NotFoundError as exc:
         raise EvalError(f"openai: unknown model {model!r}: {exc}") from exc
+    except (openai.BadRequestError, openai.UnprocessableEntityError) as exc:
+        # The request itself is wrong, so every case would fail the same way.
+        raise EvalError(f"openai rejected the request: {exc}") from exc
 
     message = response.choices[0].message
     for call in message.tool_calls or []:
@@ -372,7 +381,17 @@ async def run_evals(tools: list[types.Tool], config: EvalConfig, base_dir: Path)
         )
 
     report = EvalReport(provider=provider, model=model, min_accuracy=config.min_accuracy)
-    api_tools, back = _api_tools(tools)
+    # A tool whose input schema isn't valid JSON Schema would make the API
+    # reject every request, so leave it out and say so. The static checks
+    # report the broken schema itself.
+    usable = []
+    for tool in tools:
+        try:
+            Draft202012Validator.check_schema(tool.input_schema)
+            usable.append(tool)
+        except SchemaError:
+            report.skipped_tools.append(tool.name)
+    api_tools, back = _api_tools(usable)
     by_name = {t.name: t for t in tools}
     cache_dir = (base_dir / config.cache_dir).resolve()
     # A local command is cheap, and the key can't see edits to the script,

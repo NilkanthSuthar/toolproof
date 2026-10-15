@@ -96,6 +96,9 @@ def _print_evals(report: RunReport, console: Console) -> None:
             details = (details + "\n(cached)").strip()
         table.add_row(mark, c.name, c.expect_tool or "(no tool)", picked, details)
     console.print(table)
+    if ev.skipped_tools:
+        names = ", ".join(ev.skipped_tools)
+        console.print(f"[yellow]Left out (invalid input schema):[/yellow] {names}")
     if ev.cases:
         console.print(
             f"Accuracy {ev.accuracy:.0%} ({ev.correct}/{len(ev.cases)}), "
@@ -452,6 +455,7 @@ def _evals_to_dict(report: RunReport) -> dict[str, Any] | None:
         "correct": ev.correct,
         "min_accuracy": ev.min_accuracy,
         "error": ev.error,
+        "skipped_tools": ev.skipped_tools,
         "cases": [
             {
                 "name": c.name,
