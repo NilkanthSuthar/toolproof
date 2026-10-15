@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # toolproof is a library: keep the minimum versions users need as they are,
+    # and only open a PR when a new release falls outside an allowed range
+    # (for example mcp 3 or ruff 0.17).
+    versioning-strategy: increase-if-necessary
     groups:
       python-dependencies:
         patterns: ["*"]

@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # Full versions only, so the moving "v0" tag used by the GitHub Action never triggers a release.
+    tags: ["v*.*.*"]
 
 permissions:
   contents: read
