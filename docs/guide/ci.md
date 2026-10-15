@@ -4,6 +4,8 @@ Every command exits with `0` when everything passed, `1` when a test, check, thr
 
 ## GitHub Actions
 
+The quickest setup is the [toolproof GitHub Action](github-action.md), which also uploads the reports and writes a run summary. To run toolproof yourself instead:
+
 ```yaml title=".github/workflows/mcp.yml"
 name: MCP server tests
 
@@ -102,6 +104,7 @@ Each phase that ran gets its own `<testsuite>`:
 | `static checks` | One per tool. Fails with every error-level problem for that tool. |
 | `tests` | One per test case, with the call's latency as its time. A crash adds the server's stderr as `<system-err>`. |
 | `bench` | One per target. Its `<system-out>` holds the numbers; it fails on a broken threshold. |
+| `evals` | An `accuracy` case that fails below `min_accuracy`, then one case per eval. A single wrong pick isn't a failure on its own; it's described in that case's `<system-out>`. |
 | `fuzz` | One per tool. Skipped tools are marked `<skipped>`; findings are listed in the failure message with the seed. |
 
 If the server can't be started at all, the `tests` suite gets a `connect` case with an `<error>` holding the reason and the server's stderr.

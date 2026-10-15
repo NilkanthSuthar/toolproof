@@ -40,6 +40,15 @@ fuzz:
   max_examples: 50
   seed: 1
   skip: [send_email]
+
+evals:
+  provider: anthropic
+  model: your-model-name
+  min_accuracy: 0.9
+  cases:
+    - prompt: Is it raining in Montreal?
+      expect_tool: get_weather
+      expect_args: { city: Montreal }
 ```
 
 ## `server`
@@ -124,6 +133,26 @@ Optional. When present, `toolproof run` benchmarks after the tests. See [Benchma
 | `targets` | list | every test expecting success | What to benchmark: `tool`, `args`, optional `name` and `thresholds`. |
 
 `thresholds` keys, all optional: `p50_ms`, `p95_ms`, `p99_ms`, `max_error_rate` (a fraction, `0.01` is 1%) and `min_throughput` (calls per second). A target's own `thresholds` replace the section-wide ones.
+
+## `evals`
+
+Optional. When present, `toolproof run` runs the evals after the tests. They need a model provider; see [Tool-selection evals](evals.md) for every option.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `provider` | string | none | `anthropic`, `openai` or `command`. |
+| `model` | string | none | Model name. Required for `anthropic` and `openai`. |
+| `command` | list | none | Program for `provider: command`. |
+| `system` | string | none | Optional system prompt. |
+| `params` | map | `{}` | Extra request fields passed to the provider. |
+| `min_accuracy` | number | `1.0` | Fail below this share of correct cases. |
+| `cache` | bool | `true` | Cache API answers. |
+| `cache_dir` | string | `.toolproof-cache` | Cache folder, relative to the YAML file. |
+| `timeout_s` | number | `120` | Timeout for `provider: command`. |
+| `enabled` | bool | `true` | Include the section in `toolproof run`. |
+| `cases` | list | `[]` | `prompt`, `expect_tool` (required, may be `null`), optional `expect_args` and `name`. |
+
+`TOOLPROOF_EVAL_PROVIDER` and `TOOLPROOF_EVAL_MODEL` override `provider` and `model`.
 
 ## `fuzz`
 

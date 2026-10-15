@@ -58,8 +58,10 @@ nav:
       - Static checks: guide/static-checks.md
       - Fuzzing: guide/fuzzing.md
       - Benchmarks: guide/benchmarks.md
+      - Tool-selection evals: guide/evals.md
       - pytest plugin: guide/pytest-plugin.md
       - Running in CI: guide/ci.md
+      - GitHub Action: guide/github-action.md
   - Recipes:
       - Testing a FastMCP server: recipes/fastmcp.md
       - Servers in other languages: recipes/other-languages.md

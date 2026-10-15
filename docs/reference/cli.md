@@ -7,13 +7,23 @@ toolproof [--version] COMMAND [OPTIONS]
 | Command | What it does |
 |---|---|
 | [`inspect`](#inspect) | List a server's tools, resources and prompts, and run the static checks. |
-| [`run`](#run) | Run everything in a config file: static checks, tests, and bench and fuzz sections if present. |
+| [`run`](#run) | Run everything in a config file: static checks, tests, and evals, bench and fuzz sections if present. |
 | [`fuzz`](#fuzz) | Call every tool with generated inputs and report crashes, hangs and bad errors. |
 | [`bench`](#bench) | Measure latency percentiles, throughput and error rate. |
+| [`eval`](#eval) | Check that a model picks the right tool for each prompt. |
+
+`run`, `fuzz`, `bench` and `eval` share the report options:
+
+| Option | Description |
+|---|---|
+| `--junit PATH` | Write a JUnit XML report. |
+| `--json PATH` | Write a JSON report. |
+| `--html PATH` | Write a single-file HTML report. |
+| `--summary PATH` | Append a Markdown summary, for example to `$GITHUB_STEP_SUMMARY`. |
 
 ## Choosing the server
 
-`inspect`, `fuzz` and `bench` take the server in one of three ways:
+`inspect`, `fuzz`, `bench` and `eval` take the server in one of three ways:
 
 ```bash
 toolproof fuzz -- python server.py          # a command, after --
@@ -28,7 +38,7 @@ With none of them, they read `./toolproof.yaml` if it exists. With a config file
 | Code | Meaning |
 |---|---|
 | `0` | Everything passed. |
-| `1` | A test, error-level static check, benchmark threshold or fuzz finding failed, or the server couldn't be reached during `run`, `fuzz` or `bench`. |
+| `1` | A test, error-level static check, benchmark threshold, fuzz finding or eval accuracy failed, or the server couldn't be reached during `run`, `fuzz`, `bench` or `eval`. |
 | `2` | Usage or configuration error: bad flags, invalid YAML, a missing environment variable, or no server given. `inspect` also uses `2` when it can't connect. |
 
 ## `inspect`
@@ -51,7 +61,7 @@ toolproof inspect [--url URL | --config FILE | -- COMMAND...] [--json]
 toolproof run [CONFIG] [OPTIONS]
 ```
 
-`CONFIG` defaults to `toolproof.yaml`. Phases run in this order: static checks, tests, bench (if the file has a `bench:` section), fuzz (if it has a `fuzz:` section).
+`CONFIG` defaults to `toolproof.yaml`. Phases run in this order: static checks, tests, evals (if the file has an `evals:` section), bench (if it has `bench:`), fuzz (if it has `fuzz:`).
 
 | Option | Description |
 |---|---|
@@ -63,6 +73,7 @@ toolproof run [CONFIG] [OPTIONS]
 | `--no-checks` | Skip the static checks. |
 | `--skip-bench` | Skip the `bench:` section. |
 | `--skip-fuzz` | Skip the `fuzz:` section. |
+| `--skip-evals` | Skip the `evals:` section, for example when no API key is available. |
 
 ## `fuzz`
 
@@ -104,6 +115,23 @@ toolproof bench [--url URL | --config FILE | -- COMMAND...] [OPTIONS]
 | `--json PATH` | Write a JSON report. |
 
 Without `--tool`, `bench` uses `bench.targets` from the config, or every test that expects success. With nothing to benchmark it exits `2`. See [Benchmarks](../guide/benchmarks.md).
+
+## `eval`
+
+```
+toolproof eval [--url URL | --config FILE | -- COMMAND...] [OPTIONS]
+```
+
+Cases always come from the config's `evals:` section; a command or `--url` only changes which server's tool list is used.
+
+| Option | Description |
+|---|---|
+| `--provider NAME` | `anthropic`, `openai` or `command`. Overrides the config and `TOOLPROOF_EVAL_PROVIDER`. |
+| `--model NAME` | Model name. Overrides the config and `TOOLPROOF_EVAL_MODEL`. |
+| `--min-accuracy R` | Fail below this share of correct cases (`0` to `1`). |
+| `--no-cache` | Ask the model again and update the cache. |
+
+With no eval cases it exits `2`. See [Tool-selection evals](../guide/evals.md).
 
 ## Quoting JSON in shells
 

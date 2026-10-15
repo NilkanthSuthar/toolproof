@@ -25,7 +25,7 @@ Reads and validates a `toolproof.yaml`. Relative paths in it resolve from the fi
 
 ### `run_config(config, phases=None) -> RunReport`
 
-Runs a config and returns the results. `phases` is any of `"checks"`, `"tests"`, `"bench"`, `"fuzz"`. By default it runs what `toolproof run` would: checks and tests, plus bench and fuzz if the config has those sections. Phases always run in that order.
+Runs a config and returns the results. `phases` is any of `"checks"`, `"tests"`, `"evals"`, `"bench"`, `"fuzz"`. By default it runs what `toolproof run` would: checks and tests, plus evals, bench and fuzz if the config has those sections. Phases always run in that order.
 
 `run_config` starts its own event loop. From async code, use `await run_config_async(config, phases)` instead.
 
@@ -52,6 +52,7 @@ assert report.passed
 | `bench` | list | Benchmark results: `name`, `tool`, `calls`, `concurrency`, `errors`, `error_rate`, `throughput`, `p50_ms`, `p95_ms`, `p99_ms`, `mean_ms`, `max_ms`, `failures`, `passed`. |
 | `fuzz` | list | Fuzz results per tool: `tool`, `calls`, `skipped`, `findings` (each with `kind`, `mode`, `input`, `detail`), `passed`. |
 | `fuzz_seed` | int or None | The seed the fuzz phase used. |
+| `evals` | object or None | Eval results: `provider`, `model`, `accuracy`, `correct`, `min_accuracy`, `passed`, `error`, and `cases` (each with `name`, `prompt`, `expect_tool`, `expect_args`, `picked_tool`, `picked_args`, `failures`, `cached`, `passed`). |
 | `duration_s` | float | Wall-clock time of the run. |
 
 ## Talking to a server directly

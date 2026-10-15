@@ -13,7 +13,8 @@ There are several good tools for working with MCP servers. They solve different 
 | Latency benchmarks | Yes, with thresholds | No | No | No | Some | No |
 | pytest plugin | Yes | No | No | No | Some | No |
 | JUnit output | Yes | No | Varies | Varies | Varies | Varies |
-| Needs an LLM | No | No | No | Optional | Yes | Some analyzers |
+| Tool-selection evals | Yes | No | No | No | Yes, full agent runs | No |
+| Needs an LLM | Only for evals | No | No | Optional | Yes | Some analyzers |
 
 ## The tools
 
@@ -23,7 +24,7 @@ There are several good tools for working with MCP servers. They solve different 
 
 **Snapshot and regression gates** such as [mcp-eval-gate](https://github.com/Umer-2612/mcp-eval-gate) record known-good outputs for a set of calls and fail the build when outputs change for the worse, optionally with an LLM judging the difference. That catches regressions you didn't write an assertion for. toolproof doesn't record baselines today.
 
-**Agent evaluation platforms** such as mcp-eval and [MCPJam](https://github.com/MCPJam/inspector) put a real model in front of your server and check what it does: which tools it calls and whether the task succeeds. That measures how usable your tools are for an agent, which neither fuzzing nor assertions can. toolproof plans a narrower version of this, tool-selection evals, for v0.3.
+**Agent evaluation platforms** such as mcp-eval and [MCPJam](https://github.com/MCPJam/inspector) put a real model in front of your server and check what it does: which tools it calls and whether the task succeeds. That measures how usable your tools are for an agent, which neither fuzzing nor assertions can. toolproof's [tool-selection evals](../guide/evals.md) cover a narrower question, whether a model picks the right tool and arguments for a request, without running an agent or calling the tools.
 
 **Security scanners** such as mcp-scan and Cisco's MCP Scanner look for risky tool descriptions (prompt injection, tool poisoning), unsafe configurations and known-bad servers. They answer "is this server safe to install", while toolproof answers "does this server behave". The [security boundaries](../recipes/security-boundaries.md) recipe shows how to test specific boundaries with toolproof.
 
@@ -33,6 +34,6 @@ There are several good tools for working with MCP servers. They solve different 
 - You want to find crashes and bad error handling without writing many tests: run `toolproof fuzz`.
 - You want latency numbers and limits in CI.
 - Your tests are in Python and you'd like a pytest fixture.
-- You want it to work offline, without an API key, deterministically.
+- You want everything except evals to work offline, without an API key, deterministically, and evals to be cached and repeatable.
 
 Missing something you'd expect here? [Open an issue](https://github.com/NilkanthSuthar/toolproof/issues/new/choose).

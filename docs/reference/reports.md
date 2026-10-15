@@ -1,9 +1,9 @@
 # Reports
 
-Every command prints a summary to the console. `run`, `fuzz` and `bench` can also write report files:
+Every command prints a summary to the console. `run`, `fuzz`, `bench` and `eval` can also write report files:
 
 ```bash
-toolproof run toolproof.yaml --junit report.xml --json report.json
+toolproof run toolproof.yaml --junit report.xml --json report.json --html report.html
 ```
 
 ## Console
@@ -15,6 +15,16 @@ PASSED  |  tests: 7 passed, 0 failed  |  checks: 0 errors, 0 warnings  |  bench:
 ```
 
 When the server crashes during a test, its last stderr lines are printed under the tests table.
+
+## HTML
+
+`--html report.html` writes one self-contained page: summary cards, every table from the console, a latency chart for benchmarks, and the full result text and server stderr for each test. It has no external scripts, styles or fonts, so it opens offline from a CI artifact, and it follows the system's light or dark mode.
+
+Everything in the page that came from the server under test (tool output, inputs, error messages, stderr) is HTML-escaped, so a server can't inject script into the report.
+
+## Markdown summary
+
+`--summary PATH` appends a short Markdown summary to a file: a pass/fail line per phase, then the failures. Pointing it at `$GITHUB_STEP_SUMMARY` puts it on the GitHub Actions run page; the [GitHub Action](../guide/github-action.md) does that for you. Because it appends, several toolproof steps can share one summary.
 
 ## JUnit XML
 
@@ -81,14 +91,37 @@ A single object. Field names are stable within a major version; new fields may b
       }
     ]
   },
+  "evals": {
+    "provider": "anthropic",
+    "model": "your-model-name",
+    "passed": true,
+    "accuracy": 1.0,
+    "correct": 1,
+    "min_accuracy": 0.9,
+    "error": null,
+    "cases": [
+      {
+        "name": "Is it raining in Montreal?",
+        "prompt": "Is it raining in Montreal?",
+        "passed": true,
+        "expect_tool": "get_weather",
+        "expect_args": { "city": "Montreal" },
+        "picked_tool": "get_weather",
+        "picked_args": { "city": "Montreal" },
+        "failures": [],
+        "cached": true
+      }
+    ]
+  },
   "summary": {
-    "phases": ["checks", "tests", "bench", "fuzz"],
+    "phases": ["checks", "tests", "evals", "bench", "fuzz"],
     "tests": 1,
     "failed": 0,
     "check_errors": 1,
     "check_warnings": 0,
     "bench_failed": 0,
-    "fuzz_findings": 1
+    "fuzz_findings": 1,
+    "eval_accuracy": 1.0
   }
 }
 ```

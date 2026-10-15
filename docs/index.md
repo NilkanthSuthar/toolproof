@@ -17,8 +17,9 @@ toolproof inspect -- python my_server.py
 | **[YAML tests](guide/assertions.md)** | Call a tool and assert on errors, text, regex, JSONPath values, latency and the tool's own `outputSchema`. |
 | **[Fuzzing](guide/fuzzing.md)** | Generate valid and invalid inputs from each tool's schema, find crashes, hangs and leaked tracebacks, and shrink each one to the smallest failing input. |
 | **[Benchmarks](guide/benchmarks.md)** | Measure p50/p95/p99 latency, throughput and error rate under concurrency, and fail the build on a slow tool. |
+| **[Tool-selection evals](guide/evals.md)** | Check that a model picks the right tool, with the right arguments, for real requests. |
 | **[pytest plugin](guide/pytest-plugin.md)** | An `mcp_server` fixture for tests written in Python. |
-| **[CI output](guide/ci.md)** | Exit codes, JUnit XML and JSON reports. |
+| **[CI output](guide/ci.md)** | Exit codes, JUnit XML, JSON and HTML reports, and a [GitHub Action](guide/github-action.md). |
 
 It works with servers written in any language. The server is a black box: toolproof only talks MCP to it.
 
